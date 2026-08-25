@@ -8,6 +8,7 @@ from __future__ import annotations
 import concurrent.futures
 import json
 import math
+import os
 import re
 import subprocess
 import tempfile
@@ -142,7 +143,33 @@ def scene_xml(scene: PutBottlesSimConfig, bottle_scales: np.ndarray, bin_scale: 
                 break
         if name.startswith("water_bottle_"):
             mesh.set("scale", _fmt(scale * float(bin_scale)))
+
+    if os.environ.get("ABC_SCENE_BRIGHT", "0") == "1":
+        _brighten_surround(root)
+
     return ET.tostring(root, encoding="unicode")
+
+
+def _brighten_surround(root: ET.Element) -> None:
+    """Opt-in (ABC_SCENE_BRIGHT=1): render the surround light instead of near-black.
+
+    The scene lights with `headlight diffuse="0 0 0"` plus one weak downward
+    directional light, so under MuJoCo-Warp's ray tracer the `floor` plane comes out
+    around RGB 27 despite its `rgba="0.75"`. (It is NOT a missed ray -- the miss path
+    in mujoco_warp render.py only writes a pixel when render_skybox is set, and the
+    value is unchanged with that flag on, so the ray is hitting the floor geom.)
+    MuJoCo's OpenGL renderer shades the same XML far brighter, which is why the repo's
+    sim eval looks white and these rollouts do not.
+
+    This does not "fix" a bug -- it changes how the benchmark looks, so it must stay
+    opt-in: every model ever scored in this scene was scored on the dark surround.
+    Use it to measure how much the appearance gap matters, not as a new default.
+    """
+    for light in root.findall("./visual/headlight"):
+        light.set("ambient", "0.80 0.80 0.80")
+    for geom in root.findall(".//geom"):
+        if geom.get("name") == "floor":
+            geom.set("rgba", "1 1 1 1")
 
 
 # Environment and metrics.
@@ -255,6 +282,14 @@ class MJWarpSim:
             render_depth=[False] * model.ncam,
             use_textures=True,
             use_shadows=True,
+            # MuJoCo-Warp's ray tracer defaults render_skybox=False, so every ray that
+            # misses geometry returns the clear colour and the background comes out
+            # BLACK -- even though put_bottle.xml defines a near-white skybox
+            # (`builtin="gradient" rgb1="1 1 1" rgb2="0.98 0.98 0.98"`). The policy
+            # then sees a black void where the scene specifies a bright surround,
+            # which is both wrong w.r.t. the repo's intended render and further from
+            # any real workspace the checkpoints trained on.
+            render_skybox=True,
         )
         self.closed = False
 
@@ -345,11 +380,16 @@ class PutBottlesEnv:
         self.ctrl_indices: list[int] = []
         self.gripper_state_indices: set[int] = set()
         self.randomization = None
+        # Set in _bind when ABC_RENDER_GL=1; see render_cameras.
+        self._gl_renderer = None
 
     def close(self) -> None:
         if self.sim is not None:
             self.sim.close()
             self.sim = None
+        if self._gl_renderer is not None:
+            self._gl_renderer.close()
+            self._gl_renderer = None
 
     def _bind(self, xml: str) -> None:
         self.close()
@@ -357,6 +397,10 @@ class PutBottlesEnv:
         self.model.opt.timestep = self.scene.timestep
         self.data = mujoco.MjData(self.model)
         self.sim = MJWarpSim(self.model, self.data, height=self.height, width=self.width, gpu_id=self.gpu_id)
+        # Rebuilt with the model: each reset randomizes bottle/bin scales, so the XML
+        # (and therefore the MjModel this renderer is bound to) changes per world.
+        if os.environ.get("ABC_RENDER_GL", "0") == "1":
+            self._gl_renderer = mujoco.Renderer(self.model, height=self.height, width=self.width)
         self.evaluator = PutBottlesEvaluator(self.model, self.scene)
         self.qpos_indices, self.ctrl_indices, self.gripper_state_indices = [], [], set()
         idx = 0
@@ -439,6 +483,23 @@ class PutBottlesEnv:
         return state
 
     def render_cameras(self) -> dict[str, np.ndarray]:
+        if self._gl_renderer is not None:
+            # MuJoCo's OpenGL renderer, off the HOST MjData -- the appearance the ABC
+            # repo shows. MJWarp's ray tracer renders this scene ~3x darker (floor
+            # corner 28 vs GL's 90) because it ignores the `headlight ambient` the
+            # scene lights with, and never shows the white skybox at all.
+            #
+            # Renders only the cameras in use (3, not all 6) and needs no device->host
+            # sync: with --vanilla-physics (the repo default) mj_step already advances
+            # self.data on the host. An earlier version did get_data_into() per frame
+            # over all cameras and stalled the rollout until the policy server dropped
+            # the connection on a keepalive timeout.
+            images = {}
+            for name in self.camera_keys:
+                self._gl_renderer.update_scene(self.data, camera=name)
+                images[name] = self._gl_renderer.render().transpose(2, 0, 1).copy()
+            return images
+
         rgb = self.sim.render()
         images = {}
         for name in self.camera_keys:
@@ -766,6 +827,8 @@ def resolve_device(device: str) -> str:
 
 
 def validate_rtc_config(config: SimEvalConfig) -> list[str]:
+    if config.rtc and config.policy_backend == "lap":
+        return ["RTC eval is only supported for the dit policy backend"]
     if not config.rtc:
         return []
     errors = []
@@ -790,9 +853,46 @@ def run_eval(config: SimEvalConfig) -> dict[str, Any]:
         raise ValueError("Invalid sim eval config:\n  - " + "\n  - ".join(config_errors))
 
     require_mjwarp()
-    ckpt_path = local_checkpoint(config.checkpoint)
     device = resolve_device(config.device)
-    policy = SimPolicy(ckpt_path, config, device)
+    use_lap = config.policy_backend == "lap"
+    if use_lap:
+        if config.lap_coarse_prior:
+            # Coarse-prior seeding reads the flow EEF chunk and needs the AR
+            # `reasoning` carried forward -- incompatible with the "ar" head (which
+            # returns before the carry) and with predict-task (different wire key).
+            if config.lap_head != "flow":
+                raise ValueError("lap_coarse_prior requires lap_head='flow'")
+            if config.lap_predict_task:
+                raise ValueError("lap_coarse_prior and lap_predict_task are mutually exclusive")
+        from abc_minimal.lap_client import LAPClientPolicy
+
+        bridge = None
+        if config.lap_bridge:
+            from abc_minimal.lap_bridge import LAPSimBridge
+
+            bridge_model = mujoco.MjModel.from_xml_string(
+                scene_xml(config.scene, np.ones(config.scene.bottle_count), 1.0)
+            )
+            bridge = LAPSimBridge(
+                bridge_model,
+                gripper_ctrl_max=config.scene.gripper_ctrl_max,
+                rotation_delta_in_base=config.lap_rotation_delta_in_base,
+                align_eef_rot=config.lap_align_eef_rot,
+                anchor_on_command=config.lap_anchor_on_command,
+                binarize_gripper=config.lap_binarize_gripper,
+                eef_link=config.lap_eef_link,
+            )
+            print(f"[bridge] eef_link={config.lap_eef_link} "
+                  f"align_eef_rot={config.lap_align_eef_rot} "
+                  f"anchor_on_command={config.lap_anchor_on_command} "
+                  f"binarize_gripper={config.lap_binarize_gripper}", flush=True)
+        ckpt_path: Path | str = f"lap://{config.lap_host}:{config.lap_port}"
+        policy: SimPolicy | LAPClientPolicy = LAPClientPolicy(config, bridge=bridge)
+    else:
+        if not config.checkpoint:
+            raise ValueError("--checkpoint is required for the dit policy backend")
+        ckpt_path = local_checkpoint(config.checkpoint)
+        policy = SimPolicy(ckpt_path, config, device)
     env = PutBottlesEnv(
         height=config.camera_height,
         width=config.camera_width,
@@ -818,7 +918,9 @@ def run_eval(config: SimEvalConfig) -> dict[str, Any]:
             t0 = time.perf_counter()
             seed = int(config.seed + world_index)
             obs = env.reset(seed=seed)
-            if config.fast_inference and not fast_inference_ready:
+            if hasattr(policy, "reset_episode"):
+                policy.reset_episode()
+            if not use_lap and config.fast_inference and not fast_inference_ready:
                 warmup_rng = np.random.default_rng(config.policy_seed)
                 warmup_noise = sample_noise(warmup_rng)
                 t_fast = time.perf_counter()
@@ -1001,6 +1103,11 @@ def run_eval(config: SimEvalConfig) -> dict[str, Any]:
         flush=True,
     )
     print(f"wrote {out_dir / 'summary.json'}", flush=True)
+    # Whether the policy ever instructed a gripper close, and whether the
+    # bridge passed that instruction through (see LAPClientPolicy._log_action_rows).
+    report = getattr(policy, "report_gripper_summary", None)
+    if callable(report):
+        report()
     return summary
 
 

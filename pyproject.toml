@@ -24,6 +24,10 @@ dependencies = [
     "mcap-protobuf-support",
     # Optional: W&B logging in train.py (off by default; --log-wandb to enable).
     "wandb",
+    # LAP policy backend (eval_policy.py --policy-backend lap): minimal
+    # msgpack-numpy websocket client to a remote ego-lap policy server.
+    "msgpack",
+    "websockets",
 ]
 
 [tool.uv.sources]

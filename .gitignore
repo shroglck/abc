@@ -6,3 +6,4 @@ cache/
 uv.lock
 checkpoints/
 outputs/
+slurm_logs/
