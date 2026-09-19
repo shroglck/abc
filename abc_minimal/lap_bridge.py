@@ -127,6 +127,11 @@ class LAPSimBridge:
         # Last joint target actually commanded to the sim (set via `note_command`).
         # None until the first chunk of an episode, and after `reset`.
         self._command_joints: np.ndarray | None = None
+        self.ik_stats: dict = {
+            "solves": 0, "not_converged": 0, "iteration_limit": 0, "at_joint_limit": 0,
+            "non_finite_target": 0, "pos_over_audit": 0, "rot_over_audit": 0,
+            "pos_err": [], "rot_err": [],
+        }
         self.arms = {arm: self._resolve_arm(arm) for arm in ("left", "right")}
         # Real-YAM rotation convention (i2rt canonical-base + axis-flip), applied
         # to the grasp_site FK rotation as R_user = R_af^T @ R_cb^T @ R_raw @ R_af.
@@ -138,6 +143,49 @@ class LAPSimBridge:
         else:
             self.R_cb = np.eye(3)
             self.R_af = np.eye(3)
+
+    # -- IK diagnostics -------------------------------------------------------
+    #
+    # Audit thresholds: anything worse than these is a CONTROLLER error, and must not
+    # be mistaken for a policy error.
+    IK_POS_AUDIT_M = 1e-3     # 1 mm
+    IK_ROT_AUDIT_RAD = 1e-2   # 0.01 rad
+
+    def _record_ik(self, diag: dict) -> None:
+        acc = self.ik_stats
+        acc["solves"] += 1
+        acc["not_converged"] += int(not diag["converged"])
+        acc["iteration_limit"] += int(diag["iterations"] >= self.ik_iters and not diag["converged"])
+        acc["at_joint_limit"] += int(diag["at_joint_limit"])
+        acc["non_finite_target"] += int(diag["non_finite_target"])
+        pe, re_ = diag["position_error"], diag["rotation_error"]
+        if np.isfinite(pe):
+            acc["pos_err"].append(pe)
+            acc["pos_over_audit"] += int(pe > self.IK_POS_AUDIT_M)
+        if np.isfinite(re_):
+            acc["rot_err"].append(re_)
+            acc["rot_over_audit"] += int(re_ > self.IK_ROT_AUDIT_RAD)
+
+    def report_ik_diagnostics(self) -> None:
+        """Print IK health for the rollout. Silence here means the controller is clean."""
+        acc = self.ik_stats
+        n = acc["solves"]
+        if not n:
+            return
+        pos = np.asarray(acc["pos_err"]) if acc["pos_err"] else np.zeros(1)
+        rot = np.asarray(acc["rot_err"]) if acc["rot_err"] else np.zeros(1)
+        print(
+            f"[ik-diagnostics] solves={n}\n"
+            f"  not converged      {acc['not_converged']:6d} ({100*acc['not_converged']/n:5.1f}%)\n"
+            f"  hit iteration cap  {acc['iteration_limit']:6d} ({100*acc['iteration_limit']/n:5.1f}%)\n"
+            f"  at a joint limit   {acc['at_joint_limit']:6d} ({100*acc['at_joint_limit']/n:5.1f}%)\n"
+            f"  non-finite target  {acc['non_finite_target']:6d}\n"
+            f"  position residual  median {np.median(pos)*1000:8.4f} mm   q99 {np.quantile(pos,.99)*1000:8.3f} mm"
+            f"   over {self.IK_POS_AUDIT_M*1000:.0f} mm: {acc['pos_over_audit']} ({100*acc['pos_over_audit']/n:.1f}%)\n"
+            f"  rotation residual  median {np.median(rot):8.5f} rad  q99 {np.quantile(rot,.99):8.4f} rad"
+            f"  over {self.IK_ROT_AUDIT_RAD} rad: {acc['rot_over_audit']} ({100*acc['rot_over_audit']/n:.1f}%)",
+            flush=True,
+        )
 
     def _resolve_arm(self, arm: str) -> _ArmKin:
         m = self.model
@@ -212,9 +260,26 @@ class LAPSimBridge:
 
     # -- inverse kinematics ---------------------------------------------------
 
-    def _ik_arm(self, arm: str, target_pos_b, target_rot_b, seed: np.ndarray) -> np.ndarray:
+    def _ik_arm(self, arm: str, target_pos_b, target_rot_b,
+                seed: np.ndarray) -> tuple[np.ndarray, dict]:
+        """Solve for joint targets, and REPORT whether the solve actually converged.
+
+        Returning only the joint vector hid failures: a target that ran out of
+        iterations, saturated a joint limit, or was non-finite still produced a
+        plausible-looking command, so a controller error was indistinguishable from a
+        policy error. The second return value carries the residuals; callers
+        accumulate them (see `ik_stats` / `report_ik_diagnostics`).
+        """
         ak = self.arms[arm]
         m, d = self.model, self.data
+        target_pos_b = np.asarray(target_pos_b, dtype=np.float64)
+        target_rot_b = np.asarray(target_rot_b, dtype=np.float64)
+        finite = bool(np.isfinite(target_pos_b).all() and np.isfinite(target_rot_b).all())
+        if not finite:
+            q = np.clip(np.asarray(seed, dtype=np.float64), ak.lo, ak.hi)
+            return q, {"converged": False, "iterations": 0, "position_error": float("nan"),
+                       "rotation_error": float("nan"), "at_joint_limit": False,
+                       "non_finite_target": True}
         d.qpos[ak.qposadr] = np.clip(seed, ak.lo, ak.hi)
         mujoco.mj_kinematics(m, d)
         base_pos = d.xpos[ak.base_bid].copy()
@@ -231,7 +296,12 @@ class LAPSimBridge:
         err_quat = np.zeros(4)
         rot_err = np.zeros(3)
         cols = ak.dofadr
-        for _ in range(self.ik_iters):
+        pos_err = np.full(3, np.nan)
+        rot_err_v = np.full(3, np.nan)
+        iters = 0
+        converged = False
+        for it in range(self.ik_iters):
+            iters = it + 1
             mujoco.mj_kinematics(m, d)
             mujoco.mj_comPos(m, d)
             eef_pos, eef_mat = self._eef_pos_mat(ak)
@@ -240,8 +310,10 @@ class LAPSimBridge:
             mujoco.mju_negQuat(neg_quat, cur_quat)
             mujoco.mju_mulQuat(err_quat, target_quat, neg_quat)
             mujoco.mju_quat2Vel(rot_err, err_quat, 1.0)
+            rot_err_v = rot_err.copy()
             err = np.concatenate([pos_err, rot_err])
             if np.linalg.norm(err) < self.ik_tol:
+                converged = True
                 break
             if ak.eef_is_site:
                 mujoco.mj_jacSite(m, d, jacp, jacr, ak.eef_id)
@@ -250,7 +322,18 @@ class LAPSimBridge:
             jac = np.vstack([jacp[:, cols], jacr[:, cols]])
             dq = jac.T @ np.linalg.solve(jac @ jac.T + self.ik_damping * np.eye(6), err)
             d.qpos[ak.qposadr] = np.clip(d.qpos[ak.qposadr] + self.ik_step * dq, ak.lo, ak.hi)
-        return d.qpos[ak.qposadr].copy()
+        q = d.qpos[ak.qposadr].copy()
+        at_limit = bool(np.any(np.isclose(q, ak.lo, atol=1e-6) | np.isclose(q, ak.hi, atol=1e-6)))
+        diag = {
+            "converged": converged,
+            "iterations": iters,
+            "position_error": float(np.linalg.norm(pos_err)),
+            "rotation_error": float(np.linalg.norm(rot_err_v)),
+            "at_joint_limit": at_limit,
+            "non_finite_target": False,
+        }
+        self._record_ik(diag)
+        return q, diag
 
     def _grip(self, g: float) -> float:
         g = float(np.clip(g, 0.0, 1.0))
@@ -330,7 +413,7 @@ class LAPSimBridge:
                 target_rot = (
                     delta_rot @ start_rot if self.rotation_delta_in_base else start_rot @ delta_rot
                 )
-                q = self._ik_arm(arm, target_pos, target_rot, seed[arm])
+                q, _ik_diag = self._ik_arm(arm, target_pos, target_rot, seed[arm])
                 seed[arm] = q  # warm-start the next step
                 out[t, jslot] = q
                 out[t, gslot] = self._grip(a[6])

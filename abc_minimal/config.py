@@ -87,7 +87,7 @@ class DiTConfig:
 class PutBottlesSimConfig:
     """Scene, randomization, and task metric defaults for put-bottles sim eval."""
     gripper_ctrl_max: float = 0.0475
-    bottle_count: int = 6
+    bottle_count: int = 1
     init_q: tuple[float, ...] = (
         0.0, 1.047, 1.047, 0.0, 0.0, 0.0, 0.0,
         0.0, 1.047, 1.047, 0.0, 0.0, 0.0, 0.0,
@@ -112,9 +112,148 @@ class PutBottlesSimConfig:
     bin_occupied_radius: float = 0.13
     bin_base_quat: tuple[float, float, float, float] = (0.70710678, 0.70710678, 0.0, 0.0)
 
-    eval_bin_radius: float = 0.155
+    # Radial half-width the bottle CENTER must be inside to count as "in the bin".
+    # This is the bin's own footprint (`bin_occupied_radius`), not a padded version
+    # of it: at the previous 0.155 a bottle lying on the table alongside the bin was
+    # inside the radius, which is how table-level false positives got scored.
+    eval_bin_radius: float = 0.13
+    # A bottle counts as PICKED once its z rises this far above where it spawned.
+    # 5 cm clears the table plane and the few-mm jitter of a bottle being nudged or
+    # rolled, so it separates "never got the object off the table" from "picked it up
+    # and failed to place it" -- a distinction the in_bin predicate alone cannot make.
+    eval_pick_lift_m: float = 0.05
+    # PLACED additionally requires that the bottle was raised this far above its
+    # spawn height at SOME point in the episode -- evidence it was picked up and
+    # carried into the bin rather than knocked or dragged in. It is deliberately not
+    # a test on the final height: the bin's interior floor sits just below the table
+    # top, so a correctly placed bottle ends near its spawn height.
+    eval_place_min_lift_m: float = 0.05
     eval_min_rel_z: float = -0.06
     eval_max_rel_z: float = 0.26
+
+
+
+@dataclass
+class MugFlipSimConfig:
+    """Scene, randomization, and task metric defaults for turn-the-mug sim eval.
+
+    The robot half of the scene (arms, table, cameras, lights) is reused verbatim
+    from `put_bottle.xml`; only the manipulated objects differ, so these robot
+    fields must stay in step with `PutBottlesSimConfig`.
+    """
+    gripper_ctrl_max: float = 0.0475
+    init_q: tuple[float, ...] = (
+        0.0, 1.047, 1.047, 0.0, 0.0, 0.0, 0.0,
+        0.0, 1.047, 1.047, 0.0, 0.0, 0.0, 0.0,
+    )
+    timestep: float = 0.002
+    control_decimation: int = 17
+
+    table_z: float = 0.75
+    mug_count: int = 2
+    # YCB 025_mug, centered on its own origin: half-height 0.0407, body radius
+    # 0.0467, handle reaching out to 0.0526 in +x. Scaled down a little by default
+    # so the 0.093 m body diameter stays inside the YAM gripper's stroke.
+    mug_half_height: float = 0.0407
+    mug_radius: float = 0.0467
+    mug_handle_x: float = 0.0495
+    mug_handle_radius: float = 0.008
+    mug_handle_half_height: float = 0.021
+    mug_mass: float = 0.2
+    # Full-size and a little over: scale 1.0 is the YCB mug itself (0.093 m across,
+    # 0.081 m tall). That is wider than the YAM gripper's measured inner gap at full
+    # open (0.082 m), which is fine and matches the real task -- the mug is grasped
+    # by the rim, the wall, or the handle, none of which need the full diameter.
+    # That only works because the collision model below is a hollow shell.
+    mug_scale_range: tuple[float, float] = (0.95, 1.15)
+
+    # Hollow-shell collision: a floor disk plus `mug_wall_segments` boxes standing
+    # on the circumference. A convex mesh hull (or the solid cylinder this replaced)
+    # fills the cup, so the fingers can never enter it and every rim or wall grasp
+    # in the real episodes becomes impossible in sim.
+    mug_wall_thickness: float = 0.006
+    mug_wall_segments: int = 16
+    mug_floor_thickness: float = 0.008
+
+    # Spawn box, tighter than the full table: both arms must be able to reach it.
+    mug_xy_range: tuple[float, float, float, float] = (0.42, 0.72, -0.34, 0.34)
+    mug_spawn_clearance: float = 0.004
+    mug_min_separation: float = 0.13
+    mug_sample_attempts: int = 200
+
+    # Success: mug axis within this tilt of world +z, resting on the table, held
+    # there for `upright_hold_evals` consecutive control steps (so a mug that is
+    # merely passing through upright inside the gripper does not score).
+    upright_max_tilt_rad: float = 0.44
+    rest_z_tol: float = 0.02
+    upright_hold_evals: int = 10
+
+
+@dataclass
+class LadderSimConfig:
+    """Scene and metric defaults shared by the pick/place ladder (`abc_minimal/ladder.py`).
+
+    Per-task objects, spawn cells, containers and prompts live in the ladder's task
+    table, not here. The robot fields must stay in step with `PutBottlesSimConfig`:
+    the ladder reuses `put_bottle.xml` verbatim apart from the manipulated objects.
+    """
+    gripper_ctrl_max: float = 0.0475
+    init_q: tuple[float, ...] = (
+        0.0, 1.047, 1.047, 0.0, 0.0, 0.0, 0.0,
+        0.0, 1.047, 1.047, 0.0, 0.0, 0.0, 0.0,
+    )
+    timestep: float = 0.002
+    control_decimation: int = 17
+
+    table_z: float = 0.75
+    table_bounds: tuple[float, float, float, float] = (0.3025, 0.8975, -0.65, 0.65)
+    spawn_clearance: float = 0.005
+    # Unlike `sample_bottle_pose`, the ladder sampler RAISES when it runs out of
+    # attempts instead of returning the last (overlapping) candidate.
+    sample_attempts: int = 500
+    # Whole-layout redraws when the last object of a crowded cell finds no room.
+    layout_attempts: int = 20
+    # Object centres are kept this far from each arm base (x=0.2525, y=+-0.31): the
+    # top camera loses objects beside the bases, and the arm cannot reach under itself.
+    arm_keepout_radius: float = 0.12
+    arm_base_xy: tuple[float, float, float, float] = (0.2525, 0.31, 0.2525, -0.31)
+
+    bin_z_scale: float = 0.83
+    bin_occupied_radius: float = 0.13
+    bin_base_quat: tuple[float, float, float, float] = (0.70710678, 0.70710678, 0.0, 0.0)
+
+    # PICKED: target raised this far above its spawn height at any point. PLACE
+    # tasks also require it (carried in, not knocked in), as put-bottles does.
+    lift_m: float = 0.05
+    # STACK: target centre within these of "resting on the support", for this many
+    # consecutive evals, so a block carried over the support does not score.
+    stack_xy_tol: float = 0.012
+    stack_z_tol: float = 0.006
+    stack_hold_evals: int = 10
+    # ON goals (plate/tray): target centre may sit this far above 'resting on the top'.
+    on_z_tol: float = 0.02
+    # FOLD goals: success = lifted at some point AND layered now (see LadderEvaluator).
+    # Vertex spacing is 6 cm, so a vertex folded over lands within ~4 cm of one below.
+    fold_layer_xy: float = 0.04
+    fold_layer_dz: float = 0.005
+    fold_layer_frac: float = 0.6
+    fold_max_height: float = 0.08  # "lying": >=95% of vertices this close to the table (a real crease arcs ~5 cm)
+    fold_area_ratio: float = 0.6  # diagnostic only now
+    # ALIGN goals: max deviation from the fitted line, and max spread between gaps.
+    align_line_tol: float = 0.03
+    align_gap_tol: float = 0.04
+    # WIPE goals: a dirt spot is wiped when the pad's footprint (+margin) covers it with
+    # the pad's lowest point within wipe_z_tol of the spot, AFTER the pad has been lifted
+    # (lift_m) and while the current contact stroke has slid >= wipe_min_stroke in xy
+    # (a pad dropped onto the dirt wipes nothing). Success: >= wipe_frac of spots wiped.
+    wipe_frac: float = 0.6
+    wipe_z_tol: float = 0.012
+    wipe_margin: float = 0.004
+    wipe_min_stroke: float = 0.02
+
+    # Per-run overrides of the task table (None = use the table).
+    region_xy: tuple[float, float, float, float] | None = None
+    container_xy: tuple[float, float, float, float] | None = None
 
 
 # Reference hours-weighted real+sim bottles mix.
@@ -294,11 +433,35 @@ class SimEvalConfig:
     save_video: bool = False
     video_fps: int = 30
     video_every_n_actions: int = 1
-    prompt: str = "sim put the plastic bottles in the bin"
+    # None = the task's default (see __post_init__): the put-bottles string for
+    # put_bottles/mug_flip, the task table's prompt for the ladder.
+    prompt: str | None = None
+
+    # Which sim task to run. "put_bottles" is ABC's own scored scene; "mug_flip"
+    # is the second task added here (same robot/table/cameras, different objects
+    # and metric), and reads `mug_scene`/`prompt` instead of `scene`.
+    # "ladder" is the 14-task pick/place ladder; `ladder_task` names the rung.
+    task: Literal["put_bottles", "mug_flip", "ladder"] = "put_bottles"
+    ladder_task: str = ""
 
     scene: PutBottlesSimConfig = field(default_factory=PutBottlesSimConfig)
+    mug_scene: MugFlipSimConfig = field(default_factory=MugFlipSimConfig)
+    ladder_scene: LadderSimConfig = field(default_factory=LadderSimConfig)
     clip: ClipConfig = field(default_factory=ClipConfig)
     model: DiTConfig = field(default_factory=DiTConfig)
+
+    def __post_init__(self) -> None:
+        if self.task == "ladder":
+            # Local import: ladder.py imports this module.
+            from abc_minimal.ladder import get_task
+
+            task = get_task(self.ladder_task)
+            if self.prompt is None:
+                # The TEMPLATE (p09 fills in a colour per world); the summary stores
+                # this so every shard of a task carries the same prompt string.
+                self.prompt = task.prompt
+        elif self.prompt is None:
+            self.prompt = "sim put the plastic bottles in the bin"
 
 
 @dataclass

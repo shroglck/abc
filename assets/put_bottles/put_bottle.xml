@@ -177,7 +177,7 @@
     <mesh file="task_water_bottles/bottle/bottle_7/collision/collision_mesh_collision_0.obj" name="bottle_7_bottle_7_bottled_collision_mesh_0" scale="0.16 0.16 0.16" refquat="1.0 0.0 0.0 0.0" />
     <mesh file="task_water_bottles/bottle/bottle_7/collision/collision_mesh_collision_1.obj" name="bottle_7_bottle_7_bottled_collision_mesh_1" scale="0.16 0.16 0.16" refquat="1.0 0.0 0.0 0.0" />
     <mesh file="task_water_bottles/bottle/bottle_7/collision/collision_mesh_collision_2.obj" name="bottle_7_bottle_7_bottled_collision_mesh_2" scale="0.16 0.16 0.16" refquat="1.0 0.0 0.0 0.0" />
-  </asset>
+  <material name="yam_base" rgba="0.20 0.21 0.24 1" specular="0.35" shininess="0.25" /><material name="yam_shell" rgba="0.82 0.83 0.86 1" specular="0.25" shininess="0.15" /><material name="yam_joint" rgba="0.38 0.39 0.44 1" specular="0.40" shininess="0.30" /><material name="yam_accent" rgba="0.14 0.15 0.17 1" specular="0.45" shininess="0.35" /><material name="room_wall" rgba="0.62 0.60 0.57 1" specular="0.05" shininess="0.02" /></asset>
 
   <worldbody>
     
@@ -259,17 +259,17 @@
 
     
     <body name="left_arm" pos="0.2525 0.31 0.76" childclass="yam">
-      <geom class="visual" pos="0 0 -0.0006" quat="1 0 0 1" mesh="model2" />
+      <geom class="visual" pos="0 0 -0.0006" quat="1 0 0 1" mesh="model2" material="yam_base" />
       <geom class="collision" size="0.033 0.01" pos="0.0 0.0 0.026" quat="1 0 0 0" />
       <body name="left_link_1" pos="0 0 0.0631" quat="1 0 0 1">
         <inertial pos="-0.00192861 -0.00795735 0.0208176" quat="0.297851 0.642634 0.360045 0.607185" mass="0.12415" diaginertia="0.000180751 0.000145532 5.89179e-05" />
         <joint name="left_joint1" range="-2.61799 3.05433" class="dm4340" />
-        <geom class="visual" pos="5.26159e-07 2.34355e-07 -0.0632" quat="1 0 0 0" mesh="model2__2" />
+        <geom class="visual" pos="5.26159e-07 2.34355e-07 -0.0632" quat="1 0 0 0" mesh="model2__2" material="yam_shell" />
         <body name="left_link_2" pos="2.5e-05 -0.02 0.0409" quat="1 1 1 1" gravcomp="1">
           <inertial pos="0.132008 2.10599e-06 0.000293073" quat="1 1 1 1" mass="1.24434" diaginertia="0.0121902 0.0121318 0.000683304" />
           <joint name="left_joint2" range="0 3.66519" class="dm4340" />
-          <geom class="visual" pos="0.0199992 -0.1041 -2.44738e-05" quat="1 -1 -1 -1" mesh="model2__3" />
-          <geom class="visual" pos="0.0199992 -0.1041 -2.44738e-05" quat="1 -1 -1 -1" mesh="model2__4" />
+          <geom class="visual" pos="0.0199992 -0.1041 -2.44738e-05" quat="1 -1 -1 -1" mesh="model2__3" material="yam_joint" />
+          <geom class="visual" pos="0.0199992 -0.1041 -2.44738e-05" quat="1 -1 -1 -1" mesh="model2__4" material="yam_joint" />
           <geom class="visual" pos="0.0199992 -0.1041 -2.44738e-05" quat="1 -1 -1 -1" mesh="model2__5" material="white" />
           <geom class="collision" size="0.032 0.11" pos="0.13 0 0" quat="1 0 1 0" />
           <geom class="collision" size="0.033 0.02" pos="0 0.0 0" quat="1 0 0 0" />
@@ -277,27 +277,27 @@
           <body name="left_link_3" pos="0.264 0 0" quat="0 1 0 0" gravcomp="1">
             <inertial pos="-0.121816 -0.054846 -0.000111108" quat="1 1 1 1" mass="0.853698" diaginertia="0.00699732 0.00696112 0.000788244" />
             <joint name="left_joint3" range="0 3.66519" class="dm4340" />
-            <geom class="visual" pos="-0.244001 0.104101 2.44738e-05" quat="1 1 1 -1" mesh="model2__6" />
-            <geom class="visual" pos="-0.244001 0.104101 2.44738e-05" quat="1 1 1 -1" mesh="model2__7" />
+            <geom class="visual" pos="-0.244001 0.104101 2.44738e-05" quat="1 1 1 -1" mesh="model2__6" material="yam_shell" />
+            <geom class="visual" pos="-0.244001 0.104101 2.44738e-05" quat="1 1 1 -1" mesh="model2__7" material="yam_shell" />
             <geom class="visual" pos="-0.244001 0.104101 2.44738e-05" quat="1 1 1 -1" mesh="model2__8" material="white" />
-            <geom class="visual" pos="-0.244001 0.104101 2.44738e-05" quat="1 1 1 -1" mesh="model2__9" />
+            <geom class="visual" pos="-0.244001 0.104101 2.44738e-05" quat="1 1 1 -1" mesh="model2__9" material="yam_joint" />
             <geom class="collision" size="0.034 0.12" pos="-0.14 -0.06 0.0" quat="1 0 1 0" />
             <geom class="collision" size="0.034 0.015" pos="-0.24 -0.06 0.0" quat="1 0 0 0" />
             <body name="left_link_4" pos="-0.245 -0.06 0" quat="1 0 0 0" gravcomp="1">
               <inertial pos="-0.0769778 -0.0527104 0.000154878" quat="0.667 0.667 -0.236 -0.236" mass="0.463511" diaginertia="0.000791532 0.000744733 0.000282116" />
               <joint name="left_joint4" range="-1.5708 1.5708" class="dm4310" />
-              <geom class="visual" pos="0.00100023 0.164101 2.44738e-05" quat="1 1 1 -1" mesh="model2__10" />
+              <geom class="visual" pos="0.00100023 0.164101 2.44738e-05" quat="1 1 1 -1" mesh="model2__10" material="yam_shell" />
               <geom class="collision" size="0.03 0.015" pos="-0.073 -0.06 0.0" quat="1 1 0 0" />
               <body name="left_link_5" pos="-0.074 -0.0395 2.5e-05" quat="1 -1 1 1" gravcomp="1">
                 <inertial pos="3.64861e-05 0.00025665 0.0353526" quat="1 0 0 0" mass="0.350962" diaginertia="0.000197802 0.0001775 0.000147402" />
                 <joint name="left_joint5" range="-1.5708 1.5708" class="dm4310" />
-                <geom class="visual" pos="0 -0.0749971 0.203601" quat="1.32679e-06 1 0 0" mesh="model2__11" />
+                <geom class="visual" pos="0 -0.0749971 0.203601" quat="1.32679e-06 1 0 0" mesh="model2__11" material="yam_joint" />
                 <geom class="collision" size="0.030 0.015" pos="0 0.025 0.0395" quat="1 1 0 0" />
                 <body name="left_link_6" pos="0 0.0353 0.0395" quat="1 -1 0 0" gravcomp="1">
                   <inertial pos="-0.000217767 7.37059e-05 0.0270545" quat="1 1 0 0" mass="0.367476" diaginertia="0.000265958 0.000242686 0.000227409" />
                   <joint name="left_joint6" range="-2.0944 2.0944" class="dm4310" />
-                  <geom class="visual" pos="0 -0.164101 -0.110597" quat="1 -1 0 0" mesh="model2__12" />
-                  <geom class="visual" pos="0 -0.164101 -0.110597" quat="1 -1 0 0" mesh="model2__13" />
+                  <geom class="visual" pos="0 -0.164101 -0.110597" quat="1 -1 0 0" mesh="model2__12" material="yam_base" />
+                  <geom class="visual" pos="0 -0.164101 -0.110597" quat="1 -1 0 0" mesh="model2__13" material="yam_base" />
                   <geom class="collision" size="0.01 0.035" pos="0 0.039 0.052" quat="1 0 1 0" />
                   <geom class="collision" size="0.030 0.005" pos="0 0.0 0.03" quat="1 0 0 1" />
                   <geom class="collision" size="0.01 0.035" pos="0 -0.039 0.052" quat="1 0 1 0" />
@@ -313,8 +313,8 @@
                   <body name="left_link_left_finger" pos="-0.037 0.0392 0.0605" quat="1 0 1 0" gravcomp="1">
                     <inertial pos="-0.0192995 -0.0365902 0.039774" quat="0.757351 0.568898 -0.3199 0.0" mass="0.118" diaginertia="0.000159084 0.000154909 4.63655e-05" />
                     <joint class="finger" name="left_left_finger" range="-0.00205 0.0475" />
-                    <geom class="visual" pos="0.171097 -0.203301 0.037" quat="1 -1 -1 -1" mesh="model2__14" />
-                    <geom class="visual" pos="0.171097 -0.203301 0.037" quat="1 -1 -1 -1" mesh="model2__15" />
+                    <geom class="visual" pos="0.171097 -0.203301 0.037" quat="1 -1 -1 -1" mesh="model2__14" material="yam_accent" />
+                    <geom class="visual" pos="0.171097 -0.203301 0.037" quat="1 -1 -1 -1" mesh="model2__15" material="yam_accent" />
                     <body name="left_lf_rot" quat="1 -1 -1 1" pos="0.0 -0.0392 0.037" gravcomp="1">
                       <geom class="collision" size="0.01 0.03" pos="0.0 -0.02 0.012" quat="1 0 1 0" rgba="0.381493 0.492734 0.780446 1" />
                       <geom class="collision" size="0.01 0.02" pos="-0.02 -0.01 0.032" quat="1 0 2.5 0" rgba="0.381493 0.492734 0.780446 1" />
@@ -336,8 +336,8 @@
                   <body name="left_link_right_finger" pos="0.037 -0.0392 0.0605" quat="1 0 1 0" gravcomp="1">
                     <inertial pos="-0.0192995 0.0365902 -0.039774" quat="-0.757351 0.568898 -0.3199 0" mass="0.118" diaginertia="0.000159084 0.000154909 4.63655e-05" />
                     <joint class="finger" name="left_right_finger" range="-0.0475 0.00205" />
-                    <geom class="visual" pos="0.171097 -0.124901 -0.037" quat="1 -1 -1 -1" mesh="model2__16" />
-                    <geom class="visual" pos="0.171097 -0.124901 -0.037" quat="1 -1 -1 -1" mesh="model2__17" />
+                    <geom class="visual" pos="0.171097 -0.124901 -0.037" quat="1 -1 -1 -1" mesh="model2__16" material="yam_accent" />
+                    <geom class="visual" pos="0.171097 -0.124901 -0.037" quat="1 -1 -1 -1" mesh="model2__17" material="yam_accent" />
                     <body name="left_rf_rot" quat="1 1 -1 -1" pos="0.0 0.0392 -0.037" gravcomp="1">
                       <geom class="collision" size="0.01 0.03" pos="0.0 -0.02 0.012" quat="1 0 1 0" rgba="0.381493 0.492734 0.780446 1" />
                       <geom class="collision" size="0.01 0.02" pos="0.02 -0.01 0.032" quat="1 0 -2.5 0" rgba="0.381493 0.492734 0.780446 1" />
@@ -366,17 +366,17 @@
 
     
     <body name="right_arm" pos="0.2525 -0.31 0.76" childclass="yam">
-      <geom class="visual" pos="0 0 -0.0006" quat="1 0 0 1" mesh="model2" />
+      <geom class="visual" pos="0 0 -0.0006" quat="1 0 0 1" mesh="model2" material="yam_base" />
       <geom class="collision" size="0.033 0.01" pos="0.0 0.0 0.026" quat="1 0 0 0" />
       <body name="right_link_1" pos="0 0 0.0631" quat="1 0 0 1">
         <inertial pos="-0.00192861 -0.00795735 0.0208176" quat="0.297851 0.642634 0.360045 0.607185" mass="0.12415" diaginertia="0.000180751 0.000145532 5.89179e-05" />
         <joint name="right_joint1" range="-2.61799 3.05433" class="dm4340" />
-        <geom class="visual" pos="5.26159e-07 2.34355e-07 -0.0632" quat="1 0 0 0" mesh="model2__2" />
+        <geom class="visual" pos="5.26159e-07 2.34355e-07 -0.0632" quat="1 0 0 0" mesh="model2__2" material="yam_shell" />
         <body name="right_link_2" pos="2.5e-05 -0.02 0.0409" quat="1 1 1 1" gravcomp="1">
           <inertial pos="0.132008 2.10599e-06 0.000293073" quat="1 1 1 1" mass="1.24434" diaginertia="0.0121902 0.0121318 0.000683304" />
           <joint name="right_joint2" range="0 3.66519" class="dm4340" />
-          <geom class="visual" pos="0.0199992 -0.1041 -2.44738e-05" quat="1 -1 -1 -1" mesh="model2__3" />
-          <geom class="visual" pos="0.0199992 -0.1041 -2.44738e-05" quat="1 -1 -1 -1" mesh="model2__4" />
+          <geom class="visual" pos="0.0199992 -0.1041 -2.44738e-05" quat="1 -1 -1 -1" mesh="model2__3" material="yam_joint" />
+          <geom class="visual" pos="0.0199992 -0.1041 -2.44738e-05" quat="1 -1 -1 -1" mesh="model2__4" material="yam_joint" />
           <geom class="visual" pos="0.0199992 -0.1041 -2.44738e-05" quat="1 -1 -1 -1" mesh="model2__5" material="white" />
           <geom class="collision" size="0.032 0.11" pos="0.13 0 0" quat="1 0 1 0" />
           <geom class="collision" size="0.033 0.02" pos="0 0.0 0" quat="1 0 0 0" />
@@ -384,27 +384,27 @@
           <body name="right_link_3" pos="0.264 0 0" quat="0 1 0 0" gravcomp="1">
             <inertial pos="-0.121816 -0.054846 -0.000111108" quat="1 1 1 1" mass="0.853698" diaginertia="0.00699732 0.00696112 0.000788244" />
             <joint name="right_joint3" range="0 3.66519" class="dm4340" />
-            <geom class="visual" pos="-0.244001 0.104101 2.44738e-05" quat="1 1 1 -1" mesh="model2__6" />
-            <geom class="visual" pos="-0.244001 0.104101 2.44738e-05" quat="1 1 1 -1" mesh="model2__7" />
+            <geom class="visual" pos="-0.244001 0.104101 2.44738e-05" quat="1 1 1 -1" mesh="model2__6" material="yam_shell" />
+            <geom class="visual" pos="-0.244001 0.104101 2.44738e-05" quat="1 1 1 -1" mesh="model2__7" material="yam_shell" />
             <geom class="visual" pos="-0.244001 0.104101 2.44738e-05" quat="1 1 1 -1" mesh="model2__8" material="white" />
-            <geom class="visual" pos="-0.244001 0.104101 2.44738e-05" quat="1 1 1 -1" mesh="model2__9" />
+            <geom class="visual" pos="-0.244001 0.104101 2.44738e-05" quat="1 1 1 -1" mesh="model2__9" material="yam_joint" />
             <geom class="collision" size="0.034 0.12" pos="-0.14 -0.06 0.0" quat="1 0 1 0" />
             <geom class="collision" size="0.034 0.015" pos="-0.24 -0.06 0.0" quat="1 0 0 0" />
             <body name="right_link_4" pos="-0.245 -0.06 0" quat="1 0 0 0" gravcomp="1">
               <inertial pos="-0.0769778 -0.0527104 0.000154878" quat="0.667 0.667 -0.236 -0.236" mass="0.463511" diaginertia="0.000791532 0.000744733 0.000282116" />
               <joint name="right_joint4" range="-1.5708 1.5708" class="dm4310" />
-              <geom class="visual" pos="0.00100023 0.164101 2.44738e-05" quat="1 1 1 -1" mesh="model2__10" />
+              <geom class="visual" pos="0.00100023 0.164101 2.44738e-05" quat="1 1 1 -1" mesh="model2__10" material="yam_shell" />
               <geom class="collision" size="0.03 0.015" pos="-0.073 -0.06 0.0" quat="1 1 0 0" />
               <body name="right_link_5" pos="-0.074 -0.0395 2.5e-05" quat="1 -1 1 1" gravcomp="1">
                 <inertial pos="3.64861e-05 0.00025665 0.0353526" quat="1 0 0 0" mass="0.350962" diaginertia="0.000197802 0.0001775 0.000147402" />
                 <joint name="right_joint5" range="-1.5708 1.5708" class="dm4310" />
-                <geom class="visual" pos="0 -0.0749971 0.203601" quat="1.32679e-06 1 0 0" mesh="model2__11" />
+                <geom class="visual" pos="0 -0.0749971 0.203601" quat="1.32679e-06 1 0 0" mesh="model2__11" material="yam_joint" />
                 <geom class="collision" size="0.030 0.015" pos="0 0.025 0.0395" quat="1 1 0 0" />
                 <body name="right_link_6" pos="0 0.0353 0.0395" quat="1 -1 0 0" gravcomp="1">
                   <inertial pos="-0.000217767 7.37059e-05 0.0270545" quat="1 1 0 0" mass="0.367476" diaginertia="0.000265958 0.000242686 0.000227409" />
                   <joint name="right_joint6" range="-2.0944 2.0944" class="dm4310" />
-                  <geom class="visual" pos="0 -0.164101 -0.110597" quat="1 -1 0 0" mesh="model2__12" />
-                  <geom class="visual" pos="0 -0.164101 -0.110597" quat="1 -1 0 0" mesh="model2__13" />
+                  <geom class="visual" pos="0 -0.164101 -0.110597" quat="1 -1 0 0" mesh="model2__12" material="yam_base" />
+                  <geom class="visual" pos="0 -0.164101 -0.110597" quat="1 -1 0 0" mesh="model2__13" material="yam_base" />
                   <geom class="collision" size="0.01 0.035" pos="0 0.039 0.052" quat="1 0 1 0" />
                   <geom class="collision" size="0.030 0.005" pos="0 0.0 0.03" quat="1 0 0 1" />
                   <geom class="collision" size="0.01 0.035" pos="0 -0.039 0.052" quat="1 0 1 0" />
@@ -420,8 +420,8 @@
                   <body name="right_link_left_finger" pos="-0.037 0.0392 0.0605" quat="1 0 1 0" gravcomp="1">
                     <inertial pos="-0.0192995 -0.0365902 0.039774" quat="0.757351 0.568898 -0.3199 0.0" mass="0.118" diaginertia="0.000159084 0.000154909 4.63655e-05" />
                     <joint class="finger" name="right_left_finger" range="-0.00205 0.0475" />
-                    <geom class="visual" pos="0.171097 -0.203301 0.037" quat="1 -1 -1 -1" mesh="model2__14" />
-                    <geom class="visual" pos="0.171097 -0.203301 0.037" quat="1 -1 -1 -1" mesh="model2__15" />
+                    <geom class="visual" pos="0.171097 -0.203301 0.037" quat="1 -1 -1 -1" mesh="model2__14" material="yam_accent" />
+                    <geom class="visual" pos="0.171097 -0.203301 0.037" quat="1 -1 -1 -1" mesh="model2__15" material="yam_accent" />
                     <body name="right_lf_rot" quat="1 -1 -1 1" pos="0.0 -0.0392 0.037" gravcomp="1">
                       <geom class="collision" size="0.01 0.03" pos="0.0 -0.02 0.012" quat="1 0 1 0" rgba="0.381493 0.492734 0.780446 1" />
                       <geom class="collision" size="0.01 0.02" pos="-0.02 -0.01 0.032" quat="1 0 2.5 0" rgba="0.381493 0.492734 0.780446 1" />
@@ -443,8 +443,8 @@
                   <body name="right_link_right_finger" pos="0.037 -0.0392 0.0605" quat="1 0 1 0" gravcomp="1">
                     <inertial pos="-0.0192995 0.0365902 -0.039774" quat="-0.757351 0.568898 -0.3199 0" mass="0.118" diaginertia="0.000159084 0.000154909 4.63655e-05" />
                     <joint class="finger" name="right_right_finger" range="-0.0475 0.00205" />
-                    <geom class="visual" pos="0.171097 -0.124901 -0.037" quat="1 -1 -1 -1" mesh="model2__16" />
-                    <geom class="visual" pos="0.171097 -0.124901 -0.037" quat="1 -1 -1 -1" mesh="model2__17" />
+                    <geom class="visual" pos="0.171097 -0.124901 -0.037" quat="1 -1 -1 -1" mesh="model2__16" material="yam_accent" />
+                    <geom class="visual" pos="0.171097 -0.124901 -0.037" quat="1 -1 -1 -1" mesh="model2__17" material="yam_accent" />
                     <body name="right_rf_rot" quat="1 1 -1 -1" pos="0.0 0.0392 -0.037" gravcomp="1">
                       <geom class="collision" size="0.01 0.03" pos="0.0 -0.02 0.012" quat="1 0 1 0" rgba="0.381493 0.492734 0.780446 1" />
                       <geom class="collision" size="0.01 0.02" pos="0.02 -0.01 0.032" quat="1 0 -2.5 0" rgba="0.381493 0.492734 0.780446 1" />
@@ -491,61 +491,7 @@
         <geom mesh="bottle_0_bottle_0_bottled_collision_mesh_14" type="mesh" density="0" group="3" rgba="0 0 0 0" friction="3.0 0.03 0.003" condim="6" solref="0.004 1" solimp="0.998 0.998 0.001" priority="1" />
         <geom mesh="bottle_0_bottle_0_bottled_collision_mesh_15" type="mesh" density="0" group="3" rgba="0 0 0 0" friction="3.0 0.03 0.003" condim="6" solref="0.004 1" solimp="0.998 0.998 0.001" priority="1" />
       </body>
-    </body><body name="bottle_2" pos="0.62 -0.38 0.754"><freejoint name="bottle_2_joint" /><body name="bottle_1_bottle_1_object" pos="-2.4317521e-10 7.7046897e-10 0.0825">
-        <inertial pos="2.4317521e-10 -7.7046897e-10 1.4904017e-09" mass="0.05" diaginertia="0.00012304851 0.00012304851 1.9222004e-05" /><geom solimp="0.998 0.998 0.001" solref="0.001 1" density="0" friction="0.95 0.3 0.1" type="mesh" mesh="bottle_1_bottle_1_model_normalized_0_vis" conaffinity="0" contype="0" group="2" material="bottle_1_bottle_1_03_-_Default" />
-        <geom solimp="0.998 0.998 0.001" solref="0.001 1" density="0" friction="0.95 0.3 0.1" type="mesh" mesh="bottle_1_bottle_1_model_normalized_1_vis" conaffinity="0" contype="0" group="2" material="bottle_1_bottle_1_02_-_Default" />
-        <geom mesh="bottle_1_bottle_1_bottled_collision_mesh_0" type="mesh" density="0" group="3" rgba="0 0 0 0" friction="3.0 0.03 0.003" condim="6" solref="0.004 1" solimp="0.998 0.998 0.001" priority="1" />
-        <geom mesh="bottle_1_bottle_1_bottled_collision_mesh_1" type="mesh" density="0" group="3" rgba="0 0 0 0" friction="3.0 0.03 0.003" condim="6" solref="0.004 1" solimp="0.998 0.998 0.001" priority="1" />
-        <geom mesh="bottle_1_bottle_1_bottled_collision_mesh_2" type="mesh" density="0" group="3" rgba="0 0 0 0" friction="3.0 0.03 0.003" condim="6" solref="0.004 1" solimp="0.998 0.998 0.001" priority="1" />
-        <geom mesh="bottle_1_bottle_1_bottled_collision_mesh_3" type="mesh" density="0" group="3" rgba="0 0 0 0" friction="3.0 0.03 0.003" condim="6" solref="0.004 1" solimp="0.998 0.998 0.001" priority="1" />
-        <geom mesh="bottle_1_bottle_1_bottled_collision_mesh_4" type="mesh" density="0" group="3" rgba="0 0 0 0" friction="3.0 0.03 0.003" condim="6" solref="0.004 1" solimp="0.998 0.998 0.001" priority="1" />
-        <geom mesh="bottle_1_bottle_1_bottled_collision_mesh_5" type="mesh" density="0" group="3" rgba="0 0 0 0" friction="3.0 0.03 0.003" condim="6" solref="0.004 1" solimp="0.998 0.998 0.001" priority="1" />
-        <geom mesh="bottle_1_bottle_1_bottled_collision_mesh_6" type="mesh" density="0" group="3" rgba="0 0 0 0" friction="3.0 0.03 0.003" condim="6" solref="0.004 1" solimp="0.998 0.998 0.001" priority="1" />
-        <geom mesh="bottle_1_bottle_1_bottled_collision_mesh_7" type="mesh" density="0" group="3" rgba="0 0 0 0" friction="3.0 0.03 0.003" condim="6" solref="0.004 1" solimp="0.998 0.998 0.001" priority="1" />
-        <geom mesh="bottle_1_bottle_1_bottled_collision_mesh_8" type="mesh" density="0" group="3" rgba="0 0 0 0" friction="3.0 0.03 0.003" condim="6" solref="0.004 1" solimp="0.998 0.998 0.001" priority="1" />
-        <geom mesh="bottle_1_bottle_1_bottled_collision_mesh_9" type="mesh" density="0" group="3" rgba="0 0 0 0" friction="3.0 0.03 0.003" condim="6" solref="0.004 1" solimp="0.998 0.998 0.001" priority="1" />
-        <geom mesh="bottle_1_bottle_1_bottled_collision_mesh_10" type="mesh" density="0" group="3" rgba="0 0 0 0" friction="3.0 0.03 0.003" condim="6" solref="0.004 1" solimp="0.998 0.998 0.001" priority="1" />
-        <geom mesh="bottle_1_bottle_1_bottled_collision_mesh_11" type="mesh" density="0" group="3" rgba="0 0 0 0" friction="3.0 0.03 0.003" condim="6" solref="0.004 1" solimp="0.998 0.998 0.001" priority="1" />
-        <geom mesh="bottle_1_bottle_1_bottled_collision_mesh_12" type="mesh" density="0" group="3" rgba="0 0 0 0" friction="3.0 0.03 0.003" condim="6" solref="0.004 1" solimp="0.998 0.998 0.001" priority="1" />
-        <geom mesh="bottle_1_bottle_1_bottled_collision_mesh_13" type="mesh" density="0" group="3" rgba="0 0 0 0" friction="3.0 0.03 0.003" condim="6" solref="0.004 1" solimp="0.998 0.998 0.001" priority="1" />
-        <geom mesh="bottle_1_bottle_1_bottled_collision_mesh_14" type="mesh" density="0" group="3" rgba="0 0 0 0" friction="3.0 0.03 0.003" condim="6" solref="0.004 1" solimp="0.998 0.998 0.001" priority="1" />
-        <geom mesh="bottle_1_bottle_1_bottled_collision_mesh_15" type="mesh" density="0" group="3" rgba="0 0 0 0" friction="3.0 0.03 0.003" condim="6" solref="0.004 1" solimp="0.998 0.998 0.001" priority="1" />
-      </body>
-    </body><body name="bottle_3" pos="0.78 -0.38 0.754"><freejoint name="bottle_3_joint" /><body name="bottle_2_bottle_2_object" pos="-7.1604574e-07 -3.4744099e-07 0.078186444">
-        <inertial pos="7.1604574e-07 3.4744099e-07 7.8881179e-05" mass="0.05" diaginertia="0.00010914041 0.00010915626 1.4114628e-05" /><geom solimp="0.998 0.998 0.001" solref="0.001 1" density="0" friction="0.95 0.3 0.1" type="mesh" mesh="bottle_2_bottle_2_model_normalized_0_vis" conaffinity="0" contype="0" group="2" material="bottle_2_bottle_2_aiStandardSurface7" />
-        <geom solimp="0.998 0.998 0.001" solref="0.001 1" density="0" friction="0.95 0.3 0.1" type="mesh" mesh="bottle_2_bottle_2_model_normalized_1_vis" conaffinity="0" contype="0" group="2" material="bottle_2_bottle_2_aiStandardSurface6" />
-        <geom solimp="0.998 0.998 0.001" solref="0.001 1" density="0" friction="0.95 0.3 0.1" type="mesh" mesh="bottle_2_bottle_2_model_normalized_2_vis" conaffinity="0" contype="0" group="2" material="bottle_2_bottle_2_aiStandardSurface1_001" />
-        <geom solimp="0.998 0.998 0.001" solref="0.001 1" density="0" friction="0.95 0.3 0.1" type="mesh" mesh="bottle_2_bottle_2_model_normalized_3_vis" conaffinity="0" contype="0" group="2" material="bottle_2_bottle_2_aiStandardSurface3_001" />
-        <geom mesh="bottle_2_bottle_2_bottled_collision_mesh_0" type="mesh" density="0" group="3" rgba="0 0 0 0" friction="3.0 0.03 0.003" condim="6" solref="0.004 1" solimp="0.998 0.998 0.001" priority="1" />
-        <geom mesh="bottle_2_bottle_2_bottled_collision_mesh_1" type="mesh" density="0" group="3" rgba="0 0 0 0" friction="3.0 0.03 0.003" condim="6" solref="0.004 1" solimp="0.998 0.998 0.001" priority="1" />
-        <geom mesh="bottle_2_bottle_2_bottled_collision_mesh_2" type="mesh" density="0" group="3" rgba="0 0 0 0" friction="3.0 0.03 0.003" condim="6" solref="0.004 1" solimp="0.998 0.998 0.001" priority="1" />
-        <geom mesh="bottle_2_bottle_2_bottled_collision_mesh_3" type="mesh" density="0" group="3" rgba="0 0 0 0" friction="3.0 0.03 0.003" condim="6" solref="0.004 1" solimp="0.998 0.998 0.001" priority="1" />
-        <geom mesh="bottle_2_bottle_2_bottled_collision_mesh_4" type="mesh" density="0" group="3" rgba="0 0 0 0" friction="3.0 0.03 0.003" condim="6" solref="0.004 1" solimp="0.998 0.998 0.001" priority="1" />
-        <geom mesh="bottle_2_bottle_2_bottled_collision_mesh_5" type="mesh" density="0" group="3" rgba="0 0 0 0" friction="3.0 0.03 0.003" condim="6" solref="0.004 1" solimp="0.998 0.998 0.001" priority="1" />
-      </body>
-    </body><body name="bottle_4" pos="0.46 0.38 0.754"><freejoint name="bottle_4_joint" /><body name="bottle_3_bottle_3_object" pos="-1.2066474e-09 -2.0176139e-10 0.08">
-        <inertial pos="1.2066474e-09 2.0176139e-10 3.6519016e-10" mass="0.05" diaginertia="0.00011789572 0.00011824638 2.2808766e-05" /><geom solimp="0.998 0.998 0.001" solref="0.001 1" density="0" friction="0.95 0.3 0.1" type="mesh" mesh="bottle_3_bottle_3_model_normalized_0_vis" conaffinity="0" contype="0" group="2" material="bottle_3_bottle_3_texture_001" />
-        <geom mesh="bottle_3_bottle_3_bottled_collision_mesh_0" type="mesh" density="0" group="3" rgba="0 0 0 0" friction="3.0 0.03 0.003" condim="6" solref="0.004 1" solimp="0.998 0.998 0.001" priority="1" />
-        <geom mesh="bottle_3_bottle_3_bottled_collision_mesh_1" type="mesh" density="0" group="3" rgba="0 0 0 0" friction="3.0 0.03 0.003" condim="6" solref="0.004 1" solimp="0.998 0.998 0.001" priority="1" />
-        <geom mesh="bottle_3_bottle_3_bottled_collision_mesh_2" type="mesh" density="0" group="3" rgba="0 0 0 0" friction="3.0 0.03 0.003" condim="6" solref="0.004 1" solimp="0.998 0.998 0.001" priority="1" />
-        <geom mesh="bottle_3_bottle_3_bottled_collision_mesh_3" type="mesh" density="0" group="3" rgba="0 0 0 0" friction="3.0 0.03 0.003" condim="6" solref="0.004 1" solimp="0.998 0.998 0.001" priority="1" />
-        <geom mesh="bottle_3_bottle_3_bottled_collision_mesh_4" type="mesh" density="0" group="3" rgba="0 0 0 0" friction="3.0 0.03 0.003" condim="6" solref="0.004 1" solimp="0.998 0.998 0.001" priority="1" />
-        <geom mesh="bottle_3_bottle_3_bottled_collision_mesh_5" type="mesh" density="0" group="3" rgba="0 0 0 0" friction="3.0 0.03 0.003" condim="6" solref="0.004 1" solimp="0.998 0.998 0.001" priority="1" />
-        <geom mesh="bottle_3_bottle_3_bottled_collision_mesh_6" type="mesh" density="0" group="3" rgba="0 0 0 0" friction="3.0 0.03 0.003" condim="6" solref="0.004 1" solimp="0.998 0.998 0.001" priority="1" />
-        <geom mesh="bottle_3_bottle_3_bottled_collision_mesh_7" type="mesh" density="0" group="3" rgba="0 0 0 0" friction="3.0 0.03 0.003" condim="6" solref="0.004 1" solimp="0.998 0.998 0.001" priority="1" />
-      </body>
-    </body><body name="bottle_5" pos="0.62 0.38 0.754"><freejoint name="bottle_5_joint" /><body name="bottle_4_bottle_4_object">
-        <inertial pos="0 0 0" mass="0.05" diaginertia="0.00012679617 0.00012679183 2.1964781e-05" /><geom solimp="0.998 0.998 0.001" solref="0.001 1" density="0" friction="0.95 0.3 0.1" type="mesh" mesh="bottle_4_bottle_4_model_normalized_0_vis" conaffinity="0" contype="0" group="2" material="bottle_4_bottle_4_Scene_-_Root.008" />
-        <geom mesh="bottle_4_bottle_4_bottled_collision_mesh_0" type="mesh" density="0" group="3" rgba="0 0 0 0" friction="3.0 0.03 0.003" condim="6" solref="0.004 1" solimp="0.998 0.998 0.001" priority="1" />
-        <geom mesh="bottle_4_bottle_4_bottled_collision_mesh_1" type="mesh" density="0" group="3" rgba="0 0 0 0" friction="3.0 0.03 0.003" condim="6" solref="0.004 1" solimp="0.998 0.998 0.001" priority="1" />
-      </body>
-    </body><body name="bottle_6" pos="0.78 0.38 0.754"><freejoint name="bottle_6_joint" /><body name="bottle_7_bottle_7_object">
-        <inertial pos="0 0 0" mass="0.05" diaginertia="0.00011789572 0.00011824638 2.2808766e-05" /><geom solimp="0.998 0.998 0.001" solref="0.001 1" density="0" friction="0.95 0.3 0.1" type="mesh" mesh="bottle_7_bottle_7_model_normalized_0_vis" conaffinity="0" contype="0" group="2" material="bottle_7_bottle_7_Material.049" />
-        <geom mesh="bottle_7_bottle_7_bottled_collision_mesh_0" type="mesh" density="0" group="3" rgba="0 0 0 0" friction="3.0 0.03 0.003" condim="6" solref="0.004 1" solimp="0.998 0.998 0.001" priority="1" />
-        <geom mesh="bottle_7_bottle_7_bottled_collision_mesh_1" type="mesh" density="0" group="3" rgba="0 0 0 0" friction="3.0 0.03 0.003" condim="6" solref="0.004 1" solimp="0.998 0.998 0.001" priority="1" />
-        <geom mesh="bottle_7_bottle_7_bottled_collision_mesh_2" type="mesh" density="0" group="3" rgba="0 0 0 0" friction="3.0 0.03 0.003" condim="6" solref="0.004 1" solimp="0.998 0.998 0.001" priority="1" />
-      </body>
-    </body></worldbody>
+    </body><geom name="room_back" type="box" pos="-1.20 0 1.30" size="0.02 1.80 1.30" material="room_wall" contype="0" conaffinity="0" group="0" /><geom name="room_front" type="box" pos=" 2.40 0 1.30" size="0.02 1.80 1.30" material="room_wall" contype="0" conaffinity="0" group="0" /><geom name="room_left" type="box" pos=" 0.60 1.80 1.30" size="1.80 0.02 1.30" material="room_wall" contype="0" conaffinity="0" group="0" /><geom name="room_right" type="box" pos=" 0.60 -1.80 1.30" size="1.80 0.02 1.30" material="room_wall" contype="0" conaffinity="0" group="0" /><geom name="room_ceil" type="box" pos=" 0.60 0 2.60" size="1.80 1.80 0.02" material="room_wall" contype="0" conaffinity="0" group="0" /></worldbody>
 
   
   <equality>

@@ -35,6 +35,7 @@ import functools
 from typing import Any
 
 import msgpack
+import os
 import numpy as np
 import websockets.sync.client
 
@@ -129,6 +130,10 @@ class LAPClientPolicy:
         # key is `prev_langact` and the reset value is "" (empty) -- see below.
         self.coarse_prior = getattr(config, "lap_coarse_prior", False)
         self._prev_langact = ""
+        # Reasoning trace: every chunk's decoded langact for the CURRENT episode.
+        # Populated whenever the server returns a `reasoning` key, independent of
+        # whether the policy consumes it (see LAP_REASONING_OBSERVE_ONLY).
+        self.reasoning_trace: list[dict] = []
         # Diagnostic post-scale on returned pose-delta dims (xyz+rpy); gripper
         # dims (index 6, 13) are excluded so they stay in their calibrated [0,1]
         # range. 1.0 = no-op.
@@ -146,6 +151,7 @@ class LAPClientPolicy:
         # Gaussian noise. "none" would be truthy and parse to a biased zero-delta
         # seed, so it must NOT be reused as the coarse reset sentinel.
         self._prev_langact = ""
+        self.reasoning_trace = []
 
     def _build_request(self, obs: dict[str, Any], state: np.ndarray) -> dict[str, Any]:
         observation: dict[str, Any] = {"state": np.asarray(state, dtype=np.float32)}
@@ -191,7 +197,20 @@ class LAPClientPolicy:
         if action_prefix is not None:
             raise NotImplementedError("RTC / action_prefix is not supported for the LAP backend")
         state = self.bridge.state20_from_joints(obs["state"]) if self.bridge is not None else obs["state"]
-        response = self.client.infer(self._build_request(obs, state))
+        request = self._build_request(obs, state)
+        # ABC_DUMP_OBS=<dir>: save every request exactly as sent to the server, so the
+        # language head can be re-run offline on in-distribution sim observations.
+        dump_dir = os.environ.get("ABC_DUMP_OBS")
+        if dump_dir:
+            os.makedirs(dump_dir, exist_ok=True)
+            self._dump_idx = getattr(self, "_dump_idx", 0)
+            np.savez(
+                os.path.join(dump_dir, f"req_{os.getpid()}_{self._dump_idx:05d}.npz"),
+                prompt=np.array(request["prompt"]), frame_description=np.array(request["frame_description"]),
+                is_bimanual=np.array(request["is_bimanual"]), **request["observation"],
+            )
+            self._dump_idx += 1
+        response = self.client.infer(request)
 
         if self.head == "ar":
             return self._ar_actions(response, obs, state)
@@ -229,6 +248,14 @@ class LAPClientPolicy:
                 )
             self._prev_langact = reasoning if reasoning else ""
 
+        # Record the trace before the action path, so a chunk is logged even when the
+        # policy ignores the text. `reasoning` is absent for servers that do not
+        # decode langact at all, which is simply an empty trace rather than an error.
+        if "reasoning" in response:
+            self.reasoning_trace.append(
+                {"chunk": len(self.reasoning_trace), "reasoning": response.get("reasoning") or ""}
+            )
+
         actions = np.asarray(response["actions"], dtype=np.float32)
         if actions.ndim == 1:
             actions = actions[None]
@@ -255,12 +282,41 @@ class LAPClientPolicy:
             scale_vec[6] = 1.0
             scale_vec[13] = 1.0
             actions = actions * scale_vec
+        self._sanity_check_actions(actions)
         eef_raw = actions.copy()
         if self.bridge is not None:
             actions = self.bridge.joint_chunk_from_eef(actions, obs["state"])
             self._note_executed_command(actions)
         self._log_action_rows(eef_raw, actions if self.bridge is not None else None)
         return actions
+
+    # Diagnostic magnitudes for a PHYSICAL (unnormalized) 14-D chunk. These are
+    # warnings, never clipping: a chunk row is a cumulative displacement from chunk
+    # start, so at h16/30 Hz translations beyond ~25 cm or rotations beyond ~1 rad
+    # mean the server is returning normalized values, the wrong horizon's stats, or a
+    # convention mismatch -- not a fast trajectory.
+    TRANSLATION_WARN_M = 0.25
+    ROTATION_WARN_RAD = 1.0
+
+    def _sanity_check_actions(self, actions: np.ndarray) -> None:
+        if actions.shape[-1] < 14:
+            return
+        t = float(np.max(np.abs(actions[:, [0, 1, 2, 7, 8, 9]])))
+        r = float(np.max(np.abs(actions[:, [3, 4, 5, 10, 11, 12]])))
+        g = actions[:, [6, 13]]
+        if t > self.TRANSLATION_WARN_M and not getattr(self, "_warned_translation", False):
+            self._warned_translation = True
+            print(f"[sanity] max |translation| {t:.3f} m exceeds {self.TRANSLATION_WARN_M} m -- "
+                  f"check that the server is unnormalizing and that norm stats match the "
+                  f"trained action_horizon", flush=True)
+        if r > self.ROTATION_WARN_RAD and not getattr(self, "_warned_rotation", False):
+            self._warned_rotation = True
+            print(f"[sanity] max |rotation| {r:.3f} rad exceeds {self.ROTATION_WARN_RAD} rad -- "
+                  f"check the rotation convention", flush=True)
+        if (g.min() < -0.05 or g.max() > 1.05) and not getattr(self, "_warned_gripper", False):
+            self._warned_gripper = True
+            print(f"[sanity] gripper outside [0,1]: min {g.min():.3f} max {g.max():.3f} -- "
+                  f"the gripper column is ABSOLUTE, not a delta", flush=True)
 
     # -- gripper / action-row diagnostics -------------------------------------
 

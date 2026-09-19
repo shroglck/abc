@@ -1,0 +1,24 @@
+{
+ "7c265f6c42ef40b8b3e9c42560c28a97": {
+  "category": "plate",
+  "description": "A sleek, round white plate with a smooth, slightly concave surface and a subtle raised rim.",
+  "mass": 0.5,
+  "receptacle": true,
+  "source": null
+ },
+ "0098150095bb4b0f80a7dce8764ed392": {
+  "category": "apple",
+  "description": "A realistic apple with a warm yellow and red streaked skin, featuring a smooth, glossy texture.",
+  "mass": 0.15,
+  "receptacle": false,
+  "source": null
+ },
+ "a37c32fbdbbb4ab19c8b1cccc557f52d": {
+  "category": "tray",
+  "description": "A sleek, metallic rectangular tray with raised edges and a reflective surface, ideal for organizing or serving items.",
+  "mass": 1.5,
+  "receptacle": true,
+  "source": null
+ },
+ "_provenance": "copied from /n/fs/prism-data/shresth/molmospaces/assets/objects/objaverse (MolmoSpaces objaverse MJCF: y-up, origin at centre, visual OBJ + convex collider OBJs, mesh scale -1 1 1)"
+}

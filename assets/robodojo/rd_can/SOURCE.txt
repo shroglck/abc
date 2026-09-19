@@ -1,0 +1,3 @@
+RoboDojo asset Rigid/can/00000 (HuggingFace datasets/RoboDojo-Benchmark/RoboDojo, Apache-2.0).
+z-up, metres. mass=0.32 friction=0.25.
+Converted by scripts/import_robodojo_asset.py: USDZ -> visual OBJ + 2 convex collider OBJ(s).

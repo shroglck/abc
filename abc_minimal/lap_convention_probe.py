@@ -89,8 +89,10 @@ def _grasp_pose_world(bridge: LAPSimBridge, frame14: np.ndarray, arm: str):
     bridge._set_arm_joints("right", frame14[7:13])
     mujoco.mj_kinematics(bridge.model, bridge.data)
     ak = bridge.arms[arm]
-    pos = bridge.data.site_xpos[ak.site_id].copy()
-    mat = bridge.data.site_xmat[ak.site_id].reshape(3, 3).copy()
+    # Endpoint may be a site (grasp_site) or a body (link_6), so go through the
+    # bridge's accessor rather than assuming site_xpos.
+    pos, mat = bridge._eef_pos_mat(ak)  # noqa: SLF001
+    pos, mat = pos.copy(), mat.copy()
     return pos, mat
 
 

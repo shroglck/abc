@@ -57,6 +57,21 @@ CUDA_VISIBLE_DEVICES="$GPU_EVAL" "$ABC/.venv/bin/python" -m abc_minimal.eval_pol
     --policy-backend lap \
     --lap-host 127.0.0.1 --lap-port "$PORT" \
     --num-worlds "$NUM_WORLDS" \
+    `# Bottles in the scene. success = ALL bottles in the bin at once, so 6 is` \
+    `# all-or-nothing; BOTTLE_COUNT=1 makes a single placement score.` \
+    --scene.bottle-count "${BOTTLE_COUNT:-6}" \
+    `# Bottle spawn region (x0 x1 y0 y1). The default spans the whole table, which` \
+    `# can drop the bottle beside an arm base where the top camera cannot see it.` \
+    --scene.table-bounds ${TABLE_BOUNDS:-0.3025 0.8975 -0.65 0.65} \
+    `# abc_yam stores RAW grasp_site FK orientation -- the i2rt axis-flip` \
+    `# conjugation corrupts both the policy state and the decoded angular action.` \
+    --no-lap-align-eef-rot \
+    `# trained on absolute ANALOG gripper commands (median 0.444); thresholding at` \
+    `# 0.5 is not faithful to training.` \
+    `# Gripper execution. abc trains on ANALOG commands (46% strictly between 0.1 and` \
+    `# 0.9, median 0.444), so analog is the faithful default. The served contract's` \
+    `# binary profile is a hardcoded serving constant, not evidence. BINARIZE=1 to A/B it.` \
+    ${BINARIZE_GRIPPER:+--lap-binarize-gripper} ${BINARIZE_GRIPPER:---no-lap-binarize-gripper} \
     --save-video \
     --output-dir "$OUT_DIR"
 

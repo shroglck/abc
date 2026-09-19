@@ -1,0 +1,42 @@
+<mujoco model="rd_plate">
+  <asset>
+    <mesh name="rd_plate_visual_mesh" content_type="model/obj" file="rd_plate_visual.obj"/>
+    <mesh name="rd_plate_collider0" content_type="model/obj" file="rd_plate_collider0.obj"/>
+    <mesh name="rd_plate_collider1" content_type="model/obj" file="rd_plate_collider1.obj"/>
+    <mesh name="rd_plate_collider2" content_type="model/obj" file="rd_plate_collider2.obj"/>
+    <mesh name="rd_plate_collider3" content_type="model/obj" file="rd_plate_collider3.obj"/>
+    <mesh name="rd_plate_collider4" content_type="model/obj" file="rd_plate_collider4.obj"/>
+    <mesh name="rd_plate_collider5" content_type="model/obj" file="rd_plate_collider5.obj"/>
+    <mesh name="rd_plate_collider6" content_type="model/obj" file="rd_plate_collider6.obj"/>
+    <mesh name="rd_plate_collider7" content_type="model/obj" file="rd_plate_collider7.obj"/>
+    <mesh name="rd_plate_collider8" content_type="model/obj" file="rd_plate_collider8.obj"/>
+    <mesh name="rd_plate_collider9" content_type="model/obj" file="rd_plate_collider9.obj"/>
+    <mesh name="rd_plate_collider10" content_type="model/obj" file="rd_plate_collider10.obj"/>
+    <mesh name="rd_plate_collider11" content_type="model/obj" file="rd_plate_collider11.obj"/>
+    <mesh name="rd_plate_collider12" content_type="model/obj" file="rd_plate_collider12.obj"/>
+    <mesh name="rd_plate_collider13" content_type="model/obj" file="rd_plate_collider13.obj"/>
+    <mesh name="rd_plate_collider14" content_type="model/obj" file="rd_plate_collider14.obj"/>
+    <mesh name="rd_plate_collider15" content_type="model/obj" file="rd_plate_collider15.obj"/>
+  </asset>
+  <worldbody>
+    <body name="rd_plate">
+      <geom name="rd_plate_visual" type="mesh" mesh="rd_plate_visual_mesh" contype="0" conaffinity="0" group="2" density="0"/>
+      <geom name="rd_plate_collider0" type="mesh" mesh="rd_plate_collider0" group="3" rgba="0 0 0 0"/>
+      <geom name="rd_plate_collider1" type="mesh" mesh="rd_plate_collider1" group="3" rgba="0 0 0 0"/>
+      <geom name="rd_plate_collider2" type="mesh" mesh="rd_plate_collider2" group="3" rgba="0 0 0 0"/>
+      <geom name="rd_plate_collider3" type="mesh" mesh="rd_plate_collider3" group="3" rgba="0 0 0 0"/>
+      <geom name="rd_plate_collider4" type="mesh" mesh="rd_plate_collider4" group="3" rgba="0 0 0 0"/>
+      <geom name="rd_plate_collider5" type="mesh" mesh="rd_plate_collider5" group="3" rgba="0 0 0 0"/>
+      <geom name="rd_plate_collider6" type="mesh" mesh="rd_plate_collider6" group="3" rgba="0 0 0 0"/>
+      <geom name="rd_plate_collider7" type="mesh" mesh="rd_plate_collider7" group="3" rgba="0 0 0 0"/>
+      <geom name="rd_plate_collider8" type="mesh" mesh="rd_plate_collider8" group="3" rgba="0 0 0 0"/>
+      <geom name="rd_plate_collider9" type="mesh" mesh="rd_plate_collider9" group="3" rgba="0 0 0 0"/>
+      <geom name="rd_plate_collider10" type="mesh" mesh="rd_plate_collider10" group="3" rgba="0 0 0 0"/>
+      <geom name="rd_plate_collider11" type="mesh" mesh="rd_plate_collider11" group="3" rgba="0 0 0 0"/>
+      <geom name="rd_plate_collider12" type="mesh" mesh="rd_plate_collider12" group="3" rgba="0 0 0 0"/>
+      <geom name="rd_plate_collider13" type="mesh" mesh="rd_plate_collider13" group="3" rgba="0 0 0 0"/>
+      <geom name="rd_plate_collider14" type="mesh" mesh="rd_plate_collider14" group="3" rgba="0 0 0 0"/>
+      <geom name="rd_plate_collider15" type="mesh" mesh="rd_plate_collider15" group="3" rgba="0 0 0 0"/>
+    </body>
+  </worldbody>
+</mujoco>

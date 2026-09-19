@@ -84,6 +84,8 @@ run_variant () {  # $1=label  $2...=extra flags
       --policy-backend lap \
       --lap-host 127.0.0.1 --lap-port "$PORT" \
       --num-worlds "$NUM_WORLDS" \
+      --scene.bottle-count "${BOTTLE_COUNT:-6}" \
+      --scene.table-bounds ${TABLE_BOUNDS:-0.3025 0.8975 -0.65 0.65} \
       --lap-log-action-rows "$DUMP_CHUNKS" \
       --save-video \
       --output-dir "$OUT_BASE/$label" \
@@ -109,7 +111,12 @@ run_variant () {  # $1=label  $2...=extra flags
 # ~58 deg off on the rotation -- so "defaults" is NOT the aligned setting here, which
 # is the opposite of what the config comments claim (they were written for the
 # deployed encoder, not for what the training data contains).
-run_variant m2_aligned --lap-eef-link link_6 --no-lap-align-eef-rot
+# Gripper: training is NOT binary for either YAM dataset, so the shipped
+# lap_binarize_gripper=True default (threshold at 0.5 -> full open/close) is not
+# faithful here any more than it is for abc_yam. molmoact2's own actions_yam gripper
+# stats give std 0.411/0.423 against the 0.480/0.490 a truly binary command would
+# have, i.e. real mass strictly between open and closed.
+run_variant m2_aligned --lap-eef-link link_6 --no-lap-align-eef-rot --no-lap-binarize-gripper
 
 echo ""
 echo "=== gripper verdict (both variants) ==="

@@ -18,11 +18,37 @@ from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any
 
+# Headless OpenGL for the flex (cloth) rungs: MuJoCo picks its GL backend when the
+# package is first imported, so this must precede `import mujoco` (GLFW fails on nodes).
+os.environ.setdefault("MUJOCO_GL", "egl")
+
 import mujoco
 import numpy as np
 import torch
 
-from abc_minimal.config import FlowConfig, PutBottlesSimConfig, SimEvalConfig, validate_model_config
+from abc_minimal.config import (
+    FlowConfig,
+    LadderSimConfig,
+    MugFlipSimConfig,
+    PutBottlesSimConfig,
+    SimEvalConfig,
+    validate_model_config,
+)
+from abc_minimal.mug_flip import (
+    MugFlipEvaluator,
+    mug_scene_xml,
+    mug_spawn_z,
+    sample_mug_xy,
+    upside_down_quat,
+)
+from abc_minimal.ladder import (
+    LadderDraw,
+    LadderEvaluator,
+    fill_prompt,
+    get_task,
+    ladder_scene_xml,
+    sample_draw,
+)
 from abc_minimal.dit import (
     CLIPTextEmbedder,
     DiTPolicy,
@@ -37,7 +63,11 @@ torch.set_float32_matmul_precision("high")
 # Config.
 
 ROOT = Path(__file__).resolve().parents[1]
-SCENE_XML = ROOT / "assets" / "put_bottles" / "put_bottle.xml"
+# Overridable per run: `reset()` re-reads this file for EVERY world, so two
+# concurrent evals cannot share one mutable path -- editing it mid-run silently
+# changes the scene partway through a rollout. ABC_SCENE_XML lets each job point at
+# its own scene (e.g. the brightened vs the default-lit variant) instead.
+SCENE_XML = Path(os.environ.get("ABC_SCENE_XML") or (ROOT / "assets" / "put_bottles" / "put_bottle.xml"))
 
 
 # XML helpers.
@@ -172,6 +202,22 @@ def _brighten_surround(root: ET.Element) -> None:
             geom.set("rgba", "1 1 1 1")
 
 
+def active_scene(config: SimEvalConfig) -> PutBottlesSimConfig | MugFlipSimConfig | LadderSimConfig:
+    """The task config the env, bridge, and metric all read."""
+    return {"mug_flip": config.mug_scene, "ladder": config.ladder_scene}.get(config.task, config.scene)
+
+
+def build_scene_xml(config: SimEvalConfig) -> str:
+    """Un-randomized scene for the task, for consumers that only need the robot."""
+    if config.task == "mug_flip":
+        return mug_scene_xml(config.mug_scene, np.ones(config.mug_scene.mug_count))
+    if config.task == "ladder":
+        task = get_task(config.ladder_task)
+        draw = sample_draw(np.random.default_rng(0), config.ladder_scene, task)
+        return ladder_scene_xml(config.ladder_scene, task, draw)
+    return scene_xml(config.scene, np.ones(config.scene.bottle_count), 1.0)
+
+
 # Environment and metrics.
 
 
@@ -181,18 +227,62 @@ class PutBottlesEvaluator:
         self.scene = scene
         self.bottle_names, self.bottle_qpos_addrs = self._bottle_addrs()
         self.bin_qpos_adr = self._joint_qpos_adr("bin_joint")
+        self.bin_lo, self.bin_hi = self._bin_local_aabb()
         self.max_bottles = 0
         self.ever_success = False
+        self.spawn_z: np.ndarray | None = None
+        # Per-bottle running max lift. Kept per-bottle, not as one scalar, so PLACED
+        # can ask "was THIS bottle raised" rather than "was any bottle raised".
+        self.max_lift_per: np.ndarray | None = None
+        self.ever_picked: np.ndarray | None = None
 
     def reset(self) -> None:
         self.max_bottles = 0
         self.ever_success = False
+        # Cleared, not zeroed: the spawn height is captured on the first evaluate()
+        # after a reset, which is the only point the bottle is known to be at rest.
+        self.spawn_z = None
+        self.max_lift_per = None
+        self.ever_picked = None
+
+    @property
+    def max_lift(self) -> float:
+        return 0.0 if self.max_lift_per is None else float(self.max_lift_per.max())
 
     def _joint_qpos_adr(self, name: str) -> int:
         joint_id = mujoco.mj_name2id(self.model, mujoco.mjtObj.mjOBJ_JOINT, name)
         if joint_id < 0:
             raise ValueError(f"Joint not found: {name}")
         return int(self.model.jnt_qposadr[joint_id])
+
+    def _bin_local_aabb(self) -> tuple[np.ndarray, np.ndarray]:
+        """Extent of the bin's own geometry, in the bin body frame.
+
+        Read off the model rather than hard-coded because each world rescales the bin
+        mesh, so the numbers move per reset. In this frame the bin's axis is +y (the
+        body carries a 90-deg x rotation), giving a footprint in x/z and the floor and
+        rim as the y bounds -- which is why containment cannot be expressed as a
+        radius about the joint origin the way `eval_bin_radius` tried to.
+        """
+        bin_body = mujoco.mj_name2id(self.model, mujoco.mjtObj.mjOBJ_BODY, "bin_container")
+        if bin_body < 0:
+            raise ValueError("Body not found: bin_container")
+        pts = []
+        for geom in range(self.model.ngeom):
+            if self.model.geom_bodyid[geom] != bin_body:
+                continue
+            if self.model.geom_type[geom] != mujoco.mjtGeom.mjGEOM_MESH:
+                continue
+            mesh = self.model.geom_dataid[geom]
+            adr, num = self.model.mesh_vertadr[mesh], self.model.mesh_vertnum[mesh]
+            verts = self.model.mesh_vert[adr : adr + num].reshape(-1, 3)
+            rot = np.zeros(9)
+            mujoco.mju_quat2Mat(rot, self.model.geom_quat[geom])
+            pts.append(verts @ rot.reshape(3, 3).T + self.model.geom_pos[geom])
+        if not pts:
+            raise ValueError("bin_container has no mesh geoms to measure")
+        allv = np.vstack(pts)
+        return allv.min(axis=0), allv.max(axis=0)
 
     def _bottle_addrs(self) -> tuple[list[str], np.ndarray]:
         entries = []
@@ -208,13 +298,43 @@ class PutBottlesEvaluator:
     def evaluate(self, qpos: np.ndarray) -> dict[str, Any]:
         qpos = np.asarray(qpos, dtype=np.float32)
         bin_pos = qpos[self.bin_qpos_adr : self.bin_qpos_adr + 3]
+        bin_quat = qpos[self.bin_qpos_adr + 3 : self.bin_qpos_adr + 7]
         bottle_pos = np.stack([qpos[adr : adr + 3] for adr in self.bottle_qpos_addrs])
         rel = bottle_pos - bin_pos[None]
+
+        # Containment is tested in the BIN's frame, not the world's: the bin is
+        # yaw-randomized per world, so a world-axis box would clip a rotated bin's
+        # corners and admit space outside its walls. `local` is the bottle center
+        # expressed in the bin body frame, where `bin_lo/bin_hi` bound the geometry.
+        rot = np.zeros(9)
+        mujoco.mju_quat2Mat(rot, np.asarray(bin_quat, dtype=np.float64))
+        local = rel @ rot.reshape(3, 3)
+
+        inside_box = np.all((local >= self.bin_lo[None]) & (local <= self.bin_hi[None]), axis=1)
+        # Kept for the summary/plots; these are diagnostics now, not the predicate.
         radial = np.linalg.norm(rel[:, :2], axis=1)
         radial_margin = self.scene.eval_bin_radius - radial
         lower_height_margin = rel[:, 2] - self.scene.eval_min_rel_z
         upper_height_margin = self.scene.eval_max_rel_z - rel[:, 2]
-        in_bin = (radial_margin >= 0.0) & (lower_height_margin >= 0.0) & (upper_height_margin >= 0.0)
+
+        if self.spawn_z is None:
+            self.spawn_z = bottle_pos[:, 2].copy()
+            self.max_lift_per = np.zeros(len(self.spawn_z), dtype=np.float64)
+            self.ever_picked = np.zeros(len(self.spawn_z), dtype=bool)
+        lift = bottle_pos[:, 2] - self.spawn_z
+        self.max_lift_per = np.maximum(self.max_lift_per, lift)
+        self.ever_picked |= self.max_lift_per >= self.scene.eval_pick_lift_m
+
+        # PLACED is deliberately stricter than "inside the box the bin occupies": the
+        # bottle center must be within the bin's own footprint AND still elevated,
+        # which a bottle resting on the table beside the bin never is. Without the
+        # lift term the radial+z window alone admits table-level bottles.
+        # The lift term is EVER-lifted, not lift-right-now: the bin's interior floor
+        # sits ~4 mm below the table top, so a bottle correctly resting in the bin is
+        # at roughly its spawn height. Testing instantaneous lift would reject exactly
+        # the successes we are trying to count. Requiring that it was raised at some
+        # point is what separates "carried in" from "knocked or slid in".
+        in_bin = inside_box & (self.max_lift_per >= self.scene.eval_place_min_lift_m)
         num = int(in_bin.sum())
         active = len(self.bottle_names)
         self.max_bottles = max(self.max_bottles, num)
@@ -227,13 +347,33 @@ class PutBottlesEvaluator:
             "num_bottles_in_bin": num,
             "num_active_bottles": active,
             "max_bottles_in_bin_so_far": int(self.max_bottles),
+            # Task-agnostic aliases: the rollout loop and summary read these so a
+            # second task only has to supply its own count, not its own logging.
+            "num_solved": num,
+            "num_active": active,
+            "max_solved_so_far": int(self.max_bottles),
             "bottle_in_bin_mask": [bool(x) for x in in_bin.tolist()],
             "bottles_in_bin": [name for name, ok in zip(self.bottle_names, in_bin) if bool(ok)],
             "bottle_names": list(self.bottle_names),
             "success_count": active,
+            "bin_local_pos": [[float(v) for v in row] for row in local.tolist()],
+            "bin_local_lo": [float(v) for v in self.bin_lo.tolist()],
+            "bin_local_hi": [float(v) for v in self.bin_hi.tolist()],
+            "inside_bin_box": [bool(x) for x in inside_box.tolist()],
             "closest_radial_margin": float(radial_margin.max()),
             "closest_height_margin": float(lower_height_margin.max()),
             "closest_upper_height_margin": float(upper_height_margin.max()),
+            "max_lift_m": float(self.max_lift),
+            "max_lift_per_bottle_m": [float(x) for x in self.max_lift_per.tolist()],
+            # PICKED: raised off the table at any point, regardless of where it ended.
+            # PLACED: currently in the bin under the strict predicate above.
+            # Every placed episode is also picked, so pick_rate is an upper bound on
+            # place_rate and (picked & !placed) is the "lifted then dropped" bucket.
+            "picked": bool(self.ever_picked.all()),
+            "num_picked": int(self.ever_picked.sum()),
+            "placed": bool(success),
+            "num_placed": num,
+            "lifted": bool(self.ever_picked.all()),
         }
 
 
@@ -244,6 +384,13 @@ class Randomization:
     bin_state: dict[str, list[float]]
     bottle_scales: list[float]
     bin_scale: float
+
+
+@dataclass
+class MugRandomization:
+    seed: int
+    mug_states: dict[str, dict[str, list[float]]]
+    mug_scales: list[float]
 
 
 def require_mjwarp() -> None:
@@ -354,7 +501,14 @@ class MJWarpSim:
         return rgba[0, :, :, :, :3][..., ::-1].copy()
 
 
-class PutBottlesEnv:
+class SimEnv:
+    """One ABC sim task on the shared YAM scene.
+
+    `scene` is the ACTIVE task's config: both task configs carry the same robot
+    fields (gripper stroke, init_q, timestep, control decimation), which is what
+    every method outside `reset`/`_bind` reads, so only those two branch on `task`.
+    """
+
     def __init__(
         self,
         *,
@@ -362,14 +516,22 @@ class PutBottlesEnv:
         width: int,
         camera_keys: tuple[str, ...],
         prompt: str,
-        scene: PutBottlesSimConfig,
+        scene: PutBottlesSimConfig | MugFlipSimConfig | LadderSimConfig,
+        task: str = "put_bottles",
+        ladder_task: str = "",
         gpu_id: int | None = None,
     ):
         self.scene = scene
+        self.task = task
+        self.ladder_task = get_task(ladder_task) if task == "ladder" else None
+        self._ladder_draw: LadderDraw | None = None
+        self.mug_scales = np.ones(getattr(scene, "mug_count", 0), dtype=np.float32)
         self.height = height
         self.width = width
         self.camera_keys = tuple(camera_keys)
         self.prompt = prompt
+        # The ladder fills a per-world prompt from this (p09's {color}).
+        self.prompt_template = prompt
         self.control_decimation = scene.control_decimation
         self.gpu_id = gpu_id
         self.sim = None
@@ -396,12 +558,25 @@ class PutBottlesEnv:
         self.model = mujoco.MjModel.from_xml_string(xml)
         self.model.opt.timestep = self.scene.timestep
         self.data = mujoco.MjData(self.model)
-        self.sim = MJWarpSim(self.model, self.data, height=self.height, width=self.width, gpu_id=self.gpu_id)
+        # Deformables (flex) exist only on the host: MuJoCo-Warp has no flex support, so a
+        # cloth scene runs --vanilla-physics and renders with the OpenGL renderer. The
+        # appearance differs from the ray-traced rigid rungs; summary.json records it.
+        self.has_flex = int(self.model.nflex) > 0
+        use_gl = os.environ.get("ABC_RENDER_GL", "0") == "1" or self.has_flex
+        if self.has_flex:
+            self.sim = None
+        else:
+            self.sim = MJWarpSim(self.model, self.data, height=self.height, width=self.width, gpu_id=self.gpu_id)
         # Rebuilt with the model: each reset randomizes bottle/bin scales, so the XML
         # (and therefore the MjModel this renderer is bound to) changes per world.
-        if os.environ.get("ABC_RENDER_GL", "0") == "1":
+        if use_gl:
             self._gl_renderer = mujoco.Renderer(self.model, height=self.height, width=self.width)
-        self.evaluator = PutBottlesEvaluator(self.model, self.scene)
+        if self.task == "mug_flip":
+            self.evaluator = MugFlipEvaluator(self.model, self.scene, self.mug_scales)
+        elif self.task == "ladder":
+            self.evaluator = LadderEvaluator(self.model, self.scene, self.ladder_task, self._ladder_draw, data=self.data)
+        else:
+            self.evaluator = PutBottlesEvaluator(self.model, self.scene)
         self.qpos_indices, self.ctrl_indices, self.gripper_state_indices = [], [], set()
         idx = 0
         for robot in ("left", "right"):
@@ -420,6 +595,10 @@ class PutBottlesEnv:
 
     def reset(self, seed: int) -> dict[str, Any]:
         rng = np.random.default_rng(seed)
+        if self.task == "mug_flip":
+            return self._reset_mug_flip(rng, seed)
+        if self.task == "ladder":
+            return self._reset_ladder(rng, seed)
         scene = self.scene
         bottle_scales = rng.uniform(*scene.bottle_scale_range, size=scene.bottle_count).astype(np.float32)
         bin_scale = float(rng.uniform(*scene.bin_scale_range))
@@ -441,7 +620,19 @@ class PutBottlesEnv:
             (np.asarray(bin_pos[:2]), scene.bin_occupied_radius * bin_scale)
         ]
         bottle_states = {}
-        for index in range(scene.bottle_count):
+        # `put_bottle.xml` ships ONE bottle body. A larger --scene.bottle-count used
+        # to write bottles 2..N onto a joint id of -1, i.e. over the last joint in
+        # the model, so the extra bottles never existed and the surviving bottle got
+        # the last sampled pose. Clamp to what the scene actually has, and say so.
+        present = len(self.evaluator.bottle_names)
+        count = min(scene.bottle_count, present)
+        if count < scene.bottle_count:
+            print(
+                f"[scene] bottle_count={scene.bottle_count} but the scene has {present} "
+                f"bottle body/bodies; spawning {count}.",
+                flush=True,
+            )
+        for index in range(count):
             pos, q, center, radius = sample_bottle_pose(
                 rng, scene, index, float(bottle_scales[index]), occupied
             )
@@ -463,8 +654,74 @@ class PutBottlesEnv:
         )
         return self.obs()
 
+    def _reset_mug_flip(self, rng: np.random.Generator, seed: int) -> dict[str, Any]:
+        scene = self.scene
+        self.mug_scales = rng.uniform(*scene.mug_scale_range, size=scene.mug_count).astype(
+            np.float32
+        )
+        self._bind(mug_scene_xml(scene, self.mug_scales))
+        mujoco.mj_resetData(self.model, self.data)
+        self._set_state(np.asarray(scene.init_q, dtype=np.float32))
+
+        occupied: list[np.ndarray] = []
+        mug_states = {}
+        for index in range(scene.mug_count):
+            scale = float(self.mug_scales[index])
+            xy = sample_mug_xy(rng, scene, occupied)
+            occupied.append(xy)
+            yaw = float(rng.uniform(-math.pi, math.pi))
+            # Every mug starts upside down -- that is the task.
+            quat = upside_down_quat(yaw)
+            pos = [float(xy[0]), float(xy[1]), mug_spawn_z(scene, scale)]
+            name = f"mug_{index}_joint"
+            self._set_freejoint(name, pos, quat.tolist())
+            mug_states[name] = {"pos": pos, "quat": quat.tolist(), "yaw": [yaw], "scale": [scale]}
+
+        mujoco.mj_forward(self.model, self.data)
+        self.sim.load_state()
+        self.sim.forward()
+        self.evaluator.reset()
+        self.randomization = MugRandomization(
+            seed=seed,
+            mug_states=mug_states,
+            mug_scales=[float(v) for v in self.mug_scales.tolist()],
+        )
+        return self.obs()
+
+    def _reset_ladder(self, rng: np.random.Generator, seed: int) -> dict[str, Any]:
+        scene, task = self.scene, self.ladder_task
+        draw = sample_draw(rng, scene, task, seed=seed)
+        self._ladder_draw = draw  # _bind hands it to the evaluator (target, sizes)
+        self._bind(ladder_scene_xml(scene, task, draw))
+        mujoco.mj_resetData(self.model, self.data)
+        self._set_state(np.asarray(scene.init_q, dtype=np.float32))
+        if draw.container is not None:
+            self._set_freejoint("container_joint", draw.container.pos, draw.container.quat)
+        for name, obj in draw.objects.items():
+            if obj.kind == "cloth":
+                continue  # a flexcomp's pose is baked into the XML; its vertices have no free joint
+            self._set_freejoint(f"{name}_joint", obj.pos, obj.quat)
+
+        mujoco.mj_forward(self.model, self.data)
+        if task.goal == "wipe":
+            self.evaluator.place_dirt(self.data)  # before the first render: the policy sees the dirt
+        if self.sim is not None:
+            self.sim.load_state()
+            self.sim.forward()
+        self.evaluator.reset()
+        # Per-world prompt from the run's template (the table's, or --prompt):
+        # p09 names a different colour each world.
+        draw.prompt = fill_prompt(self.prompt_template, task, draw.target, draw.support)
+        self.prompt = draw.prompt
+        self.randomization = draw
+        return self.obs()
+
     def _set_freejoint(self, name: str, pos: list[float], quat: list[float]) -> None:
         jid = mujoco.mj_name2id(self.model, mujoco.mjtObj.mjOBJ_JOINT, name)
+        if jid < 0:
+            # numpy would index jnt_qposadr[-1] and silently write this pose over
+            # the LAST joint in the model instead of erroring.
+            raise ValueError(f"Free joint not found in the scene: {name}")
         adr = int(self.model.jnt_qposadr[jid])
         self.data.qpos[adr : adr + 3] = pos
         self.data.qpos[adr + 3 : adr + 7] = quat
@@ -477,6 +734,8 @@ class PutBottlesEnv:
             self.data.qpos[qpos_idx] = val
 
     def get_state(self) -> np.ndarray:
+        if self.sim is None:
+            return self.get_state_vanilla()
         state = np.asarray(self.sim.qpos()[self.qpos_indices], dtype=np.float32)
         for i in self.gripper_state_indices:
             state[i] = np.clip(state[i] / self.scene.gripper_ctrl_max, 0.0, 1.0)
@@ -522,11 +781,15 @@ class PutBottlesEnv:
         return ctrl
 
     def step_one(self, action: np.ndarray) -> None:
+        if self.sim is None:
+            return self.step_one_vanilla(action)
         ctrl = self.action_to_ctrl(action)
         self.sim.set_ctrl(ctrl)
         self.sim.step(self.control_decimation)
 
     def evaluate(self) -> dict[str, Any]:
+        if self.sim is None:
+            return self.evaluate_vanilla()
         return self.evaluator.evaluate(self.sim.qpos())
 
     def step_one_vanilla(self, action: np.ndarray) -> None:
@@ -544,8 +807,9 @@ class PutBottlesEnv:
         return state
 
     def render_cameras_vanilla_state(self) -> dict[str, np.ndarray]:
-        self.sim.load_state()
-        self.sim.forward()
+        if self.sim is not None:
+            self.sim.load_state()
+            self.sim.forward()
         return self.render_cameras()
 
     def obs_vanilla_state(self) -> dict[str, Any]:
@@ -554,6 +818,10 @@ class PutBottlesEnv:
             "images": self.render_cameras_vanilla_state(),
             "prompt": self.prompt,
         }
+
+
+#: Back-compat alias: the env was put-bottles-only before the mug task.
+PutBottlesEnv = SimEnv
 
 
 # Policy adapter.
@@ -870,12 +1138,10 @@ def run_eval(config: SimEvalConfig) -> dict[str, Any]:
         if config.lap_bridge:
             from abc_minimal.lap_bridge import LAPSimBridge
 
-            bridge_model = mujoco.MjModel.from_xml_string(
-                scene_xml(config.scene, np.ones(config.scene.bottle_count), 1.0)
-            )
+            bridge_model = mujoco.MjModel.from_xml_string(build_scene_xml(config))
             bridge = LAPSimBridge(
                 bridge_model,
-                gripper_ctrl_max=config.scene.gripper_ctrl_max,
+                gripper_ctrl_max=active_scene(config).gripper_ctrl_max,
                 rotation_delta_in_base=config.lap_rotation_delta_in_base,
                 align_eef_rot=config.lap_align_eef_rot,
                 anchor_on_command=config.lap_anchor_on_command,
@@ -893,14 +1159,22 @@ def run_eval(config: SimEvalConfig) -> dict[str, Any]:
             raise ValueError("--checkpoint is required for the dit policy backend")
         ckpt_path = local_checkpoint(config.checkpoint)
         policy = SimPolicy(ckpt_path, config, device)
-    env = PutBottlesEnv(
+    env = SimEnv(
         height=config.camera_height,
         width=config.camera_width,
         camera_keys=config.model.camera_keys,
         prompt=config.prompt,
-        scene=config.scene,
+        scene=active_scene(config),
+        task=config.task,
+        ladder_task=config.ladder_task,
         gpu_id=config.gpu_id,
     )
+    if config.task == "ladder" and any(o.kind == "cloth" for o in get_task(config.ladder_task).objects) and not config.vanilla_physics:
+        raise ValueError("cloth rungs need --vanilla-physics (MuJoCo-Warp cannot simulate flex bodies)")
+    if config.task == "ladder" and get_task(config.ladder_task).goal == "wipe" and not config.vanilla_physics:
+        # The evaluator hides wiped spots by writing MjData.mocap_pos; only the vanilla
+        # path copies MjData into the renderer each frame.
+        raise ValueError("wipe rungs need --vanilla-physics")
     rng = np.random.default_rng(config.policy_seed)
     worlds = []
     out_dir = Path(config.output_dir).expanduser().resolve()
@@ -1027,8 +1301,8 @@ def run_eval(config: SimEvalConfig) -> dict[str, Any]:
                         "obs_render_s": float(rtc_obs_s),
                         "wall_s": float(time.perf_counter() - t_chunk),
                         "rtc_ready_at_chunk_end": rtc_ready,
-                        "bottles": int(final_eval["num_bottles_in_bin"]),
-                        "max_bottles": int(final_eval["max_bottles_in_bin_so_far"]),
+                        "bottles": int(final_eval["num_solved"]),
+                        "max_bottles": int(final_eval["max_solved_so_far"]),
                     }
                     chunk_metrics.append(metric)
                     if config.log_every_chunk:
@@ -1042,7 +1316,7 @@ def run_eval(config: SimEvalConfig) -> dict[str, Any]:
                             f"infer={metric['infer_s'] * 1000:.0f}ms "
                             f"steps={metric['steps_s'] * 1000:.0f}ms "
                             f"render={metric['obs_render_s'] * 1000:.0f}ms "
-                            f"bottles={final_eval['num_bottles_in_bin']}/{final_eval['num_active_bottles']} "
+                            f"solved={final_eval['num_solved']}/{final_eval['num_active']} "
                             f"success={final_eval['ever_success']}{rtc_text}",
                             flush=True,
                         )
@@ -1064,11 +1338,16 @@ def run_eval(config: SimEvalConfig) -> dict[str, Any]:
                 "randomization": env.randomization,
                 "final_task_eval": final_eval,
                 "video_path": str(video_path) if video_path is not None else None,
+                # Per-chunk decoded langact for this episode, when the server returns
+                # one. Empty list for policies that never decode reasoning.
+                "reasoning_trace": list(getattr(policy, "reasoning_trace", []) or []),
             }
             worlds.append(world)
             print(
-                f"world={world_index:03d} done success={world['success']} "
-                f"bottles={final_eval['max_bottles_in_bin_so_far']}/{final_eval['num_active_bottles']} "
+                f"world={world_index:03d} done placed={world['success']} "
+                f"picked={final_eval.get('picked')} "
+                f"max_lift={final_eval.get('max_lift_m', float('nan')):.3f} "
+                f"solved={final_eval['max_solved_so_far']}/{final_eval['num_active']} "
                 f"steps={steps}",
                 flush=True,
             )
@@ -1077,13 +1356,32 @@ def run_eval(config: SimEvalConfig) -> dict[str, Any]:
 
     success = np.asarray([w["success"] for w in worlds], dtype=bool)
     rewards = np.asarray([w["reward"] for w in worlds], dtype=np.float32)
-    max_bottles = np.asarray(
-        [w["final_task_eval"]["max_bottles_in_bin_so_far"] for w in worlds],
+    max_solved = np.asarray(
+        [w["final_task_eval"]["max_solved_so_far"] for w in worlds],
         dtype=np.float32,
     )
+    max_lift = np.asarray(
+        [w["final_task_eval"].get("max_lift_m", float("nan")) for w in worlds],
+        dtype=np.float32,
+    )
+    picked = np.asarray(
+        [bool(w["final_task_eval"].get("picked", False)) for w in worlds], dtype=bool
+    )
+    placed = np.asarray(
+        [bool(w["final_task_eval"].get("placed", False)) for w in worlds], dtype=bool
+    )
+    lifted = picked
     summary = {
-        "format": "abc_minimal_put_bottles_eval/v1",
+        "format": f"abc_minimal_{config.task}_eval/v1",
+        "task": config.task,
+        # Ladder rung ("" for put_bottles/mug_flip). `prompt` below is the task's
+        # template; p09's per-world prompt is in each world's randomization.
+        "ladder_task": config.ladder_task,
+        "goal": get_task(config.ladder_task).goal if config.task == "ladder" else None,
         "checkpoint": str(ckpt_path),
+        # Which scene file (lighting variant) this ran on; ABC_SCENE_XML overrides it.
+        "scene_xml": str(SCENE_XML),
+        "renderer": "gl" if (env.has_flex or os.environ.get("ABC_RENDER_GL", "0") == "1") else "mjwarp",
         "prompt": config.prompt,
         "config": asdict(config),
         "resolved_device": device,
@@ -1091,7 +1389,21 @@ def run_eval(config: SimEvalConfig) -> dict[str, Any]:
         "num_success": int(success.sum()),
         "num_worlds": len(worlds),
         "mean_reward": float(rewards.mean()) if rewards.size else None,
-        "mean_max_bottles_in_bin": float(max_bottles.mean()) if max_bottles.size else None,
+        "mean_max_solved": float(max_solved.mean()) if max_solved.size else None,
+        # Two separate metrics, not one score with a caveat:
+        #   pick_rate  -- got the bottle off the table at all
+        #   place_rate -- and finished with it inside the bin, still elevated
+        # `success_rate` is an alias of place_rate, kept so existing readers of the
+        # summary do not silently change meaning.
+        "pick_rate": float(picked.mean()) if picked.size else None,
+        "num_picked": int(picked.sum()),
+        "place_rate": float(placed.mean()) if placed.size else None,
+        "num_placed": int(placed.sum()),
+        # Picked but not placed: the "lifted then dropped" failure mode.
+        "num_picked_not_placed": int((picked & ~placed).sum()),
+        "lift_rate": float(lifted.mean()) if lifted.size else None,
+        "num_lifted": int(lifted.sum()),
+        "mean_max_lift_m": float(max_lift.mean()) if max_lift.size else None,
         "worlds": worlds,
     }
     (out_dir / "summary.json").write_text(json.dumps(jsonable(summary), indent=2, sort_keys=True))
@@ -1099,7 +1411,11 @@ def run_eval(config: SimEvalConfig) -> dict[str, Any]:
         f"summary: success_rate={summary['success_rate']} "
         f"num_success={summary['num_success']}/{summary['num_worlds']} "
         f"mean_reward={summary['mean_reward']} "
-        f"mean_max_bottles={summary['mean_max_bottles_in_bin']}",
+        f"mean_max_solved={summary['mean_max_solved']} "
+        f"pick={summary['num_picked']}/{summary['num_worlds']} "
+        f"place={summary['num_placed']}/{summary['num_worlds']} "
+        f"picked_not_placed={summary['num_picked_not_placed']} "
+        f"mean_max_lift_m={summary['mean_max_lift_m']}",
         flush=True,
     )
     print(f"wrote {out_dir / 'summary.json'}", flush=True)
@@ -1108,6 +1424,10 @@ def run_eval(config: SimEvalConfig) -> dict[str, Any]:
     report = getattr(policy, "report_gripper_summary", None)
     if callable(report):
         report()
+    # IK health: a grossly failed solve must be attributable to the CONTROLLER, not
+    # read as bad policy output.
+    if bridge is not None:
+        bridge.report_ik_diagnostics()
     return summary
 
 
