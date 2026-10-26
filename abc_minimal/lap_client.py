@@ -139,6 +139,10 @@ class LAPClientPolicy:
         # range. 1.0 = no-op.
         self.action_scale = float(getattr(config, "lap_action_scale", 1.0))
         self.client = _WebsocketClient(config.lap_host, config.lap_port)
+        # Per-request sampling seed (openpi Policy.infer pops `rng_seed`). None keeps the
+        # server's own advancing stream, i.e. the behaviour of every earlier eval;
+        # branch_select sets it so candidate k at a decision is reproducible.
+        self.rng_seed: int | None = None
 
     def reset_episode(self) -> None:
         """Clear carried language-action history at the start of each rollout."""
@@ -152,6 +156,10 @@ class LAPClientPolicy:
         # seed, so it must NOT be reused as the coarse reset sentinel.
         self._prev_langact = ""
         self.reasoning_trace = []
+        # ABC_DUMP_OBS bookkeeping: tag dumps with (episode, chunk) so offline analyses
+        # can tell the policy-independent first frame from later, trajectory-dependent ones.
+        self._dump_ep = getattr(self, "_dump_ep", -1) + 1
+        self._dump_step = 0
 
     def _build_request(self, obs: dict[str, Any], state: np.ndarray) -> dict[str, Any]:
         observation: dict[str, Any] = {"state": np.asarray(state, dtype=np.float32)}
@@ -180,6 +188,8 @@ class LAPClientPolicy:
             # Carried-forward language action of the previously executed chunk
             # ("none" on the first chunk). Ignored by non-predict-task servers.
             request["prev_language_actions"] = self._prev_language_actions
+        if self.rng_seed is not None:
+            request["rng_seed"] = int(self.rng_seed)
         if self.coarse_prior:
             # Previous chunk's decoded langact ("" on the first chunk of an
             # episode -> the coarse server falls back to Gaussian noise). Sent
@@ -205,15 +215,14 @@ class LAPClientPolicy:
             os.makedirs(dump_dir, exist_ok=True)
             self._dump_idx = getattr(self, "_dump_idx", 0)
             np.savez(
-                os.path.join(dump_dir, f"req_{os.getpid()}_{self._dump_idx:05d}.npz"),
+                os.path.join(dump_dir, f"req_{os.getpid()}_{self._dump_idx:05d}"
+                             f"_e{getattr(self, '_dump_ep', 0):03d}_s{getattr(self, '_dump_step', 0):03d}.npz"),
                 prompt=np.array(request["prompt"]), frame_description=np.array(request["frame_description"]),
                 is_bimanual=np.array(request["is_bimanual"]), **request["observation"],
             )
             self._dump_idx += 1
+            self._dump_step = getattr(self, "_dump_step", 0) + 1
         response = self.client.infer(request)
-
-        if self.head == "ar":
-            return self._ar_actions(response, obs, state)
 
         if self.predict_task:
             # Carry this chunk's summary forward as the next query's previous
@@ -255,6 +264,9 @@ class LAPClientPolicy:
             self.reasoning_trace.append(
                 {"chunk": len(self.reasoning_trace), "reasoning": response.get("reasoning") or ""}
             )
+
+        if self.head == "ar":
+            return self._ar_actions(response, obs, state)
 
         actions = np.asarray(response["actions"], dtype=np.float32)
         if actions.ndim == 1:
@@ -430,7 +442,7 @@ class LAPClientPolicy:
         if self.bridge is None:
             return delta[None]
         target = self.bridge.joint_chunk_from_eef(delta[None], obs["state"])[0]
-        horizon = max(int(self.config.execute_chunk_dim), 1)
+        horizon = max(int(self.config.lap_ar_horizon_steps or self.config.execute_chunk_dim), 1)
         start = np.asarray(obs["state"], dtype=np.float32)
         # Linearly interpolate joint targets from the current pose to the IK
         # target so the position controller approaches smoothly; replan next call.

@@ -367,6 +367,13 @@ class SimEvalConfig:
     # The coarse-prior seed is parsed server-side instead, so it needs the matching
     # ego-lap flag: serve_policy.py --langact-convention-dataset.
     lap_langact_convention_dataset: str = ""
+    # AR head: steps over which one parsed langact delta is interpolated. The text
+    # describes the checkpoint's langact window (horizon_seconds * control_frequency;
+    # 30 steps = 1.0 s for abcsim_reason), but only `execute_chunk_dim` steps run before
+    # replanning. 0 keeps the old behaviour (interpolate over execute_chunk_dim, i.e. the
+    # whole window's motion in 0.5 s = 2x speed); 30 runs the text at its stated speed and
+    # executes the first half, exactly like the flow head's 30-step chunk.
+    lap_ar_horizon_steps: int = 0
     # Advertise the sample as bimanual in the request (`is_bimanual`). LAP's
     # server-side ImageHandler slots cameras differently per morphology: bimanual
     # -> [base_0_rgb, left_wrist_0_rgb, right_wrist_0_rgb]; single-arm ->

@@ -165,6 +165,14 @@ class LadderTask:
     # the stains (then "place the pad on it and let it slide 2 cm" would pass). 0 = off, the
     # w01/w02 v1 rule, kept so their runs stay comparable.
     wipe_min_total_stroke: float = 0.0
+    # > 0: rubbing counts only while the container is held at least this high above where it
+    # spawned (one arm holds the plate up, the other wipes it). Strokes are then measured in
+    # the CONTAINER frame, so carrying plate and pad together is not rubbing. 0 = off.
+    wipe_hold_lift: float = 0.0
+    # Bimanual (w04b): rubbing also needs one arm TOUCHING the container and the OTHER arm
+    # GRIPPING the pad (>= 2 of its bodies in contact). Closes the w04 loophole: one arm
+    # tilts the plate while an ungripped sponge rides on it and slides over the stains.
+    wipe_require_bimanual: bool = False
 
 
 TIGHT = SpawnRegion(xy=(0.45, 0.65, -0.10, 0.10))  # the b1g cell
@@ -341,6 +349,27 @@ _TASKS = (
                # The sponge covers all 12 blade stains at once, so coverage alone proves nothing:
                # require ~2 back-and-forth passes of rubbing.
                wipe_min_total_stroke=0.10),
+    # Bimanual (2026-10-09): w02b plus "the plate must be held up while it is wiped".
+    LadderTask("w04_hold_plate_wipe_sponge", "wipe", "hold the plate with one hand and wipe it with the sponge",  # 0
+               (SPONGE,), "sponge", SpawnRegion(xy=(0.38, 0.74, -0.36, 0.36), min_sep=0.04),
+               container=ContainerSpec("msobj", xy=(0.54, 0.62, -0.06, 0.06), yaw=(-0.5, 0.5), asset=MS_PLATE),
+               wipe_min_total_stroke=0.10, wipe_hold_lift=0.03),
+    LadderTask("w04b_hold_plate_wipe_sponge", "wipe", "hold the plate with one hand and wipe it with the sponge",  # 0
+               (SPONGE,), "sponge", SpawnRegion(xy=(0.38, 0.74, -0.36, 0.36), min_sep=0.04),
+               container=ContainerSpec("msobj", xy=(0.54, 0.62, -0.06, 0.06), yaw=(-0.5, 0.5), asset=MS_PLATE),
+               wipe_min_total_stroke=0.10, wipe_hold_lift=0.03, wipe_require_bimanual=True),
+    # Layout-OOD evals for w02b (2026-10-26, flow-RL study): identical to w02b except the plate
+    # centre is drawn 6-14 cm beyond its training box (y in [-0.06, 0.06]) on one side, with x
+    # widened to [0.48, 0.68]; sponge region and plate yaw unchanged. Left/right are mirrored so
+    # neither arm is favoured. Eval only -- never train on these.
+    LadderTask("w02b_ood_left", "wipe", "wipe the plate with the sponge",  # 0
+               (SPONGE,), "sponge", SpawnRegion(xy=(0.38, 0.74, -0.36, 0.36), min_sep=0.04),
+               container=ContainerSpec("msobj", xy=(0.48, 0.68, 0.12, 0.20), yaw=(-0.5, 0.5), asset=MS_PLATE),
+               wipe_min_total_stroke=0.10),
+    LadderTask("w02b_ood_right", "wipe", "wipe the plate with the sponge",  # 0
+               (SPONGE,), "sponge", SpawnRegion(xy=(0.38, 0.74, -0.36, 0.36), min_sep=0.04),
+               container=ContainerSpec("msobj", xy=(0.48, 0.68, -0.20, -0.12), yaw=(-0.5, 0.5), asset=MS_PLATE),
+               wipe_min_total_stroke=0.10),
 )
 
 LADDER_TASKS: dict[str, LadderTask] = {t.name: t for t in _TASKS}
@@ -361,7 +390,9 @@ RETIRED: frozenset[str] = frozenset({
 # Defined and runnable by name (--ladder-task / TASK=<rung>) but not yet in TASK=all:
 # appended at the end of the table so no existing array index moves when they join.
 EXPERIMENTAL: frozenset[str] = frozenset({"w01_wipe_board_towel", "w02_wipe_plate_sponge", "w03_wipe_spatula_sponge",
-                                           "w01b_wipe_board_towel", "w02b_wipe_plate_sponge"})
+                                           "w01b_wipe_board_towel", "w02b_wipe_plate_sponge",
+                                           "w04_hold_plate_wipe_sponge", "w04b_hold_plate_wipe_sponge",
+                                           "w02b_ood_left", "w02b_ood_right"})
 LADDER_TASK_NAMES: tuple[str, ...] = tuple(n for n in LADDER_TASKS if n not in RETIRED and n not in EXPERIMENTAL)
 
 
@@ -1076,6 +1107,31 @@ class LadderEvaluator:
         self.stroke_m = 0.0
         self.total_stroke_m = 0.0  # summed over all contact strokes; never reset in an episode
         self.last_pad_xy: np.ndarray | None = None
+        self.container_z0: float | None = None
+
+    def _bimanual_hold(self) -> bool:
+        """One arm touches the container while the OTHER grips the pad (>= 2 of its bodies).
+        Reads the live MjData contacts (evaluate runs right after mj_step)."""
+        if self.data is None:
+            return False
+        m, d = self.model, self.data
+        pad_root = int(m.body_rootid[m.jnt_bodyid[mujoco.mj_name2id(m, mujoco.mjtObj.mjOBJ_JOINT, f"{self.names[self.t]}_joint")]])
+        c_root = int(m.body_rootid[m.jnt_bodyid[mujoco.mj_name2id(m, mujoco.mjtObj.mjOBJ_JOINT, "container_joint")]])
+        pad: dict[str, set[int]] = {"left": set(), "right": set()}
+        cont: dict[str, bool] = {"left": False, "right": False}
+        for i in range(d.ncon):
+            c = d.contact[i]
+            b1, b2 = int(m.geom_bodyid[c.geom1]), int(m.geom_bodyid[c.geom2])
+            for a, b in ((b1, b2), (b2, b1)):
+                name = mujoco.mj_id2name(m, mujoco.mjtObj.mjOBJ_BODY, b) or ""
+                arm = "left" if name.startswith("left_") else "right" if name.startswith("right_") else None
+                if arm is None:
+                    continue
+                if int(m.body_rootid[a]) == pad_root:
+                    pad[arm].add(b)
+                elif int(m.body_rootid[a]) == c_root:
+                    cont[arm] = True
+        return any(len(pad[g]) >= 2 and cont[h] for g, h in (("left", "right"), ("right", "left")))
 
     def _container_pose(self, qpos: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
         a = self.container_adr
@@ -1152,6 +1208,8 @@ class LadderEvaluator:
         if self.spawn is None:
             # First eval after a reset: the only point the objects are known at rest.
             self.spawn = pos.copy()
+            if self.container_adr is not None:
+                self.container_z0 = float(qpos[self.container_adr + 2])
             self.max_lift = np.zeros(len(self.names))
             self.ever_picked = np.zeros(len(self.names), dtype=bool)
         lift = pos[:, 2] - self.spawn[:, 2]
@@ -1245,15 +1303,29 @@ class LadderEvaluator:
             bottom_z = p[2] - float(np.abs(rot[2]) @ self.pad_half)  # lowest point of the box
             gap = bottom_z - spots[:, 2]
             under = inside & (gap <= self.scene.wipe_z_tol)
+            hold_lift = float(self.task.wipe_hold_lift)
+            c_lift = None
+            pad_xy = p[:2]
+            if hold_lift > 0:
+                c_lift = float(qpos[self.container_adr + 2]) - float(self.container_z0)
+                if c_lift < hold_lift:
+                    under = np.zeros_like(under)  # plate not held up: rubbing does not count
+                c_pos, c_rot = self._container_pose(qpos)
+                pad_xy = ((p - c_pos) @ c_rot)[:2]  # relative to the plate, not the world
+            bimanual_ok = None
+            if self.task.wipe_require_bimanual:
+                bimanual_ok = self._bimanual_hold()
+                if not bimanual_ok:
+                    under = np.zeros_like(under)
             in_contact = bool(under.any())
             # Stroke = xy path the pad has slid while continuously in contact with the dirt.
             if in_contact:
                 if self.last_pad_xy is not None:
-                    step_m = float(np.linalg.norm(p[:2] - self.last_pad_xy))
+                    step_m = float(np.linalg.norm(pad_xy - self.last_pad_xy))
                     self.stroke_m += step_m
                     if self.ever_picked[t]:
                         self.total_stroke_m += step_m
-                self.last_pad_xy = p[:2].copy()
+                self.last_pad_xy = np.array(pad_xy, copy=True)
             else:
                 self.stroke_m, self.last_pad_xy = 0.0, None
             if in_contact and self.ever_picked[t] and self.stroke_m >= self.scene.wipe_min_stroke:
@@ -1273,6 +1345,9 @@ class LadderEvaluator:
                 "wipe_stroke_m": float(self.stroke_m),
                 "wipe_total_stroke_m": float(self.total_stroke_m),
                 "wipe_pad_gap_m": float(gap[inside].min()) if inside.any() else None,
+                "wipe_container_lift_m": c_lift,
+                "wipe_container_held": None if c_lift is None else bool(c_lift >= hold_lift),
+                "wipe_bimanual_ok": bimanual_ok,
             }
         elif self.task.goal == "fold":
             # FOLDED = lifted at some point + LAYERED now: a vertex is layered when another

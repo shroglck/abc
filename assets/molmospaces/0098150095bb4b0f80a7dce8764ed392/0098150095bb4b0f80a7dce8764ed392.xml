@@ -1,0 +1,34 @@
+<mujoco model="0098150095bb4b0f80a7dce8764ed392">
+  <compiler angle="radian"/>
+
+  <default>
+    <default class="/">
+      <default class="__VISUAL_MJT__">
+        <geom contype="0" conaffinity="0"/>
+      </default>
+      <default class="__STRUCTURAL_MJT__">
+        <geom contype="8" conaffinity="15" group="4" friction="0.9 0.9 0.001" solref="0.025" solimp="0.998 0.998" density="500"/>
+      </default>
+      <default class="__DYNAMIC_MJT__">
+        <geom conaffinity="15" group="4" friction="0.9 0.9 0.001" solref="0.025" solimp="0.998 0.998" density="500"/>
+      </default>
+      <default class="__ARTICULABLE_DYNAMIC_MJT__">
+        <geom contype="0" conaffinity="7" group="4" friction="0.9 0.9 0.001" solref="0.025" solimp="0.998 0.998" density="500"/>
+      </default>
+    </default>
+  </default>
+
+  <asset>
+    <texture type="2d" name="0098150095bb4b0f80a7dce8764ed392_albedo" file="0098150095bb4b0f80a7dce8764ed392_visual_0.png"/>
+    <material name="0098150095bb4b0f80a7dce8764ed392_mat" texture="0098150095bb4b0f80a7dce8764ed392_albedo"/>
+    <mesh name="0098150095bb4b0f80a7dce8764ed392_visual_mesh" content_type="model/obj" file="0098150095bb4b0f80a7dce8764ed392_visual.obj" scale="-1 1 1"/>
+    <mesh name="0098150095bb4b0f80a7dce8764ed392_collider0" content_type="model/obj" file="0098150095bb4b0f80a7dce8764ed392_collider0.obj" scale="-1 1 1"/>
+  </asset>
+
+  <worldbody>
+    <body name="0098150095bb4b0f80a7dce8764ed392">
+      <geom name="0098150095bb4b0f80a7dce8764ed392_visual" class="__VISUAL_MJT__" type="mesh" mass="1e-08" material="0098150095bb4b0f80a7dce8764ed392_mat" mesh="0098150095bb4b0f80a7dce8764ed392_visual_mesh"/>
+      <geom name="0098150095bb4b0f80a7dce8764ed392_collider0" class="__DYNAMIC_MJT__" type="mesh" rgba="0.662635 0.547525 0.722372 1" mesh="0098150095bb4b0f80a7dce8764ed392_collider0"/>
+    </body>
+  </worldbody>
+</mujoco>
