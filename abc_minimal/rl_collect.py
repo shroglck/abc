@@ -9,6 +9,12 @@ returned by a server started with LAP_RETURN_MODEL_ACTIONS=1 from rl_trees/r101k
   --selector oracle   K candidates per decision from one snapshot, commit the highest
                       privileged progress score (SFT arm's data, as branch_select)
 
+--lookahead-chunks H (oracle only, default 0): after each candidate's chunk the policy runs
+H more chunks (own sampling seeds) and the candidate is scored on the state reached; the
+best candidate's whole 1+H-chunk segment is committed, so branch points are 1+H chunks
+apart. Every candidate's first chunk and its end-of-segment features are saved, so group
+rewards (e.g. subgoal values fitted after collection) are defined offline.
+
 --rollouts-per-world R repeats each world R times with distinct sampling seeds
 (SeedSequence([world, rollout_id, decision, k]), rollout_id = --rollout-id-base + r), so
 RL groups share a start state but not their noise.
@@ -51,10 +57,12 @@ class RLCollectConfig(BranchSelectConfig):
     rollouts_per_world: int = 1
     rollout_id_base: int = 0
     save_candidates: bool = True
+    lookahead_chunks: int = 0
 
 
-def rollout_seed(world_seed: int, rollout_id: int, decision: int, k: int) -> int:
-    return int(np.random.SeedSequence([world_seed, rollout_id, decision, k]).generate_state(1)[0] & 0x7FFFFFFF)
+def rollout_seed(world_seed: int, rollout_id: int, decision: int, k: int, h: int = 0) -> int:
+    key = [world_seed, rollout_id, decision, k] + ([h] if h else [])
+    return int(np.random.SeedSequence(key).generate_state(1)[0] & 0x7FFFFFFF)
 
 
 def features(priv: dict[str, Any], ev: dict[str, Any]) -> np.ndarray:
@@ -112,6 +120,8 @@ def run(config: RLCollectConfig) -> dict[str, Any]:
         raise ValueError("rl_collect needs --policy-backend lap, --task ladder and --vanilla-physics")
     if config.lap_head != "flow" or config.rtc:
         raise ValueError("rl_collect supports the flow head without RTC only")
+    if config.lookahead_chunks and config.selector != "oracle":
+        raise ValueError("--lookahead-chunks needs --selector oracle")
     require_mjwarp()
     policy = _build_policy(config)
     cap = _Capture(policy.client)
@@ -122,12 +132,13 @@ def run(config: RLCollectConfig) -> dict[str, Any]:
     lift_m = float(active_scene(config).lift_m)
     min_stroke = float(getattr(get_task(config.ladder_task), "wipe_min_total_stroke", 0.0) or 0.10)
     n_cand = 1 if config.selector == "sample" else int(config.branch_k)
+    H = int(config.lookahead_chunks)
     out = Path(config.dump_dir or config.output_dir).expanduser().resolve()
     out.mkdir(parents=True, exist_ok=True)
     done = set()
     if (out / "index.jsonl").exists():
         done = {(r["world_seed"], r["rollout_id"]) for r in map(json.loads, open(out / "index.jsonl")) if r}
-    print(f"[rl_collect] rung={config.ladder_task} selector={config.selector} K={n_cand} "
+    print(f"[rl_collect] rung={config.ladder_task} selector={config.selector} K={n_cand} lookahead={H} "
           f"R={config.rollouts_per_world} worlds={config.num_worlds} from seed {config.seed} -> {out}", flush=True)
     n_success = n_eps = 0
     try:
@@ -143,55 +154,71 @@ def run(config: RLCollectConfig) -> dict[str, Any]:
                 ev = env.evaluate_vanilla()
                 f_now = features(privileged_state(env), ev)
                 rec: dict[str, list] = {k: [] for k in ("state", "actions_model", "steps", "feat_before", "feat_after",
-                                                        "cand_actions", "cand_scores", "pick")}
+                                                        "cand_actions", "cand_scores", "cand_feat_end", "cand_chunks",
+                                                        "branch_at", "pick")}
                 imgs: dict[str, list] = {}
                 req0 = None
                 steps = 0
-                for chunk in range(config.num_chunks):
+                chunk = 0
+                while chunk < config.num_chunks:
                     obs = env.obs_vanilla_state()
                     root = snapshot(env, policy) if n_cand > 1 else None
-                    cands = []
+                    cands, best = [], None
                     for k in range(n_cand):
                         if k:
                             restore(env, policy, root)
-                        policy.rng_seed = rollout_seed(seed, rid, chunk, k)
-                        actions = policy.infer(obs)
-                        request, a_model = cap.request, np.asarray(cap.response["actions_model"], np.float32)
-                        e, n = ev, 0
-                        for action in actions[: config.execute_chunk_dim]:
-                            env.step_one_vanilla(action)
-                            e = env.evaluate_vanilla()
-                            n += 1
-                            if e["ever_success"]:
+                        seg, e = [], ev
+                        for h in range(1 + H):
+                            if chunk + h >= config.num_chunks or e["ever_success"]:
                                 break
-                        priv = privileged_state(env)
-                        cands.append({"request": request, "a_model": a_model, "n": n, "eval": e,
-                                      "score": progress_score(priv, e, lift_m), "feat": features(priv, e),
-                                      "end": snapshot(env, policy) if n_cand > 1 else None})
-                    pick = int(np.argmax([c["score"] for c in cands])) if n_cand > 1 else 0
+                            policy.rng_seed = rollout_seed(seed, rid, chunk, k, h)
+                            actions = policy.infer(obs if h == 0 else env.obs_vanilla_state())
+                            request, a_model = cap.request, np.asarray(cap.response["actions_model"], np.float32)
+                            n = 0
+                            for action in actions[: config.execute_chunk_dim]:
+                                env.step_one_vanilla(action)
+                                e = env.evaluate_vanilla()
+                                n += 1
+                                if e["ever_success"]:
+                                    break
+                            priv = privileged_state(env)
+                            seg.append({"request": request, "a_model": a_model, "n": n, "eval": e,
+                                        "feat": features(priv, e)})
+                        score = progress_score(priv, e, lift_m)
+                        cands.append({"a_model": seg[0]["a_model"], "score": score, "feat_end": seg[-1]["feat"],
+                                      "chunks": len(seg)})
+                        if best is None or score > best["score"]:
+                            best = {"k": k, "score": score, "seg": seg,
+                                    "end": snapshot(env, policy) if n_cand > 1 else None}
+                    pick = best["k"]
                     if n_cand > 1 and pick != n_cand - 1:
-                        restore(env, policy, cands[pick]["end"])
-                    c = cands[pick]
-                    req = c["request"]
-                    req0 = req0 or req
-                    for role, img in req["observation"].items():
-                        if role != "state":
-                            imgs.setdefault(role, []).append(np.asarray(img, np.uint8))
-                    rec["state"].append(np.asarray(req["observation"]["state"], np.float32))
-                    rec["actions_model"].append(c["a_model"])
-                    rec["steps"].append(c["n"])
-                    rec["feat_before"].append(f_now)
-                    rec["feat_after"].append(c["feat"])
-                    rec["pick"].append(pick)
+                        restore(env, policy, best["end"])
                     if n_cand > 1 and config.save_candidates:
+                        rec["branch_at"].append(len(rec["steps"]))
                         rec["cand_actions"].append(np.stack([x["a_model"] for x in cands]).astype(np.float16))
                         rec["cand_scores"].append(np.asarray([x["score"] for x in cands], np.float32))
-                    f_now, ev = c["feat"], c["eval"]
-                    steps += c["n"]
-                    if config.log_every_chunk:
-                        m, ph = wipe_subgoal(f_now, lift_m, min_stroke)
-                        print(f"seed={seed} r={rid} chunk={chunk:03d} pick={pick} subgoal=({m},{ph}) "
-                              f"success={ev['ever_success']}", flush=True)
+                        if H:
+                            rec["cand_feat_end"].append(np.stack([x["feat_end"] for x in cands]))
+                            rec["cand_chunks"].append(np.asarray([x["chunks"] for x in cands], np.int8))
+                    for h, c in enumerate(best["seg"]):
+                        req = c["request"]
+                        req0 = req0 or req
+                        for role, img in req["observation"].items():
+                            if role != "state":
+                                imgs.setdefault(role, []).append(np.asarray(img, np.uint8))
+                        rec["state"].append(np.asarray(req["observation"]["state"], np.float32))
+                        rec["actions_model"].append(c["a_model"])
+                        rec["steps"].append(c["n"])
+                        rec["feat_before"].append(f_now)
+                        rec["feat_after"].append(c["feat"])
+                        rec["pick"].append(pick if h == 0 else -1)
+                        f_now, ev = c["feat"], c["eval"]
+                        steps += c["n"]
+                        if config.log_every_chunk:
+                            m, ph = wipe_subgoal(f_now, lift_m, min_stroke)
+                            print(f"seed={seed} r={rid} chunk={chunk + h:03d} pick={pick if h == 0 else -1} "
+                                  f"subgoal=({m},{ph}) success={ev['ever_success']}", flush=True)
+                    chunk += len(best["seg"])
                     if ev["ever_success"]:
                         break
                 fb, fa = np.stack(rec["feat_before"]), np.stack(rec["feat_after"])
@@ -204,10 +231,18 @@ def run(config: RLCollectConfig) -> dict[str, Any]:
                 if rec["cand_actions"]:
                     arrays["cand_actions"] = np.stack(rec["cand_actions"])
                     arrays["cand_scores"] = np.stack(rec["cand_scores"])
+                    arrays["branch_at"] = np.asarray(rec["branch_at"], np.int16)
+                if rec["cand_feat_end"]:
+                    fe = np.stack(rec["cand_feat_end"])
+                    arrays["cand_feat_end"] = fe
+                    arrays["cand_subgoal_end"] = np.asarray(
+                        [[wipe_subgoal(x, lift_m, min_stroke) for x in g] for g in fe], np.int8)
+                    arrays["cand_chunks"] = np.stack(rec["cand_chunks"])
                 path = out / f"ep_{seed}_{rid}.npz"
                 np.savez_compressed(path, **arrays)
                 row = {"world_seed": seed, "rollout_id": rid, "file": path.name, "success": bool(ev["ever_success"]),
                        "decisions": len(rec["steps"]), "steps": steps, "selector": config.selector, "branch_k": n_cand,
+                       "lookahead_chunks": H,
                        "prompt": req0["prompt"], "frame_description": req0["frame_description"],
                        "is_bimanual": bool(req0["is_bimanual"]), "feature_names": list(FEATURES),
                        "final_eval": _priv_summary(privileged_state(env), ev) | {"success": bool(ev["ever_success"])},
