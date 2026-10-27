@@ -8,6 +8,11 @@ returned by a server started with LAP_RETURN_MODEL_ACTIONS=1 from rl_trees/r101k
   --selector sample   plain on-policy sampling (RL arms); K is ignored
   --selector oracle   K candidates per decision from one snapshot, commit the highest
                       privileged progress score (SFT arm's data, as branch_select)
+  --selector planner  abc_minimal.planner's scripted privileged planner instead of the model
+                      (no policy server: launch with NO_SERVER=1). Its chunk goes through the
+                      same client path; dumps hold `actions_phys` (the clean label, physical
+                      EEF deltas) and `actions_exec` (what ran, with --planner-noise
+                      perturbations) instead of `actions_model`.
 
 --lookahead-chunks H (oracle only, default 0): after each candidate's chunk the policy runs
 H more chunks (own sampling seeds) and the candidate is scored on the state reached; the
@@ -58,6 +63,7 @@ class RLCollectConfig(BranchSelectConfig):
     rollout_id_base: int = 0
     save_candidates: bool = True
     lookahead_chunks: int = 0
+    planner_noise: float = 1.0
 
 
 def rollout_seed(world_seed: int, rollout_id: int, decision: int, k: int, h: int = 0) -> int:
@@ -104,7 +110,7 @@ class _Capture:
 
     def infer(self, request: dict[str, Any]) -> dict[str, Any]:
         self.request, self.response = request, self._client.infer(request)
-        if "actions_model" not in self.response:
+        if "actions_model" not in self.response and "actions_label" not in self.response:
             raise RuntimeError("server response has no `actions_model`: start it from rl_trees/r101k_flowrl "
                                "with LAP_RETURN_MODEL_ACTIONS=1")
         return self.response
@@ -114,8 +120,8 @@ class _Capture:
 
 
 def run(config: RLCollectConfig) -> dict[str, Any]:
-    if config.selector not in ("sample", "oracle"):
-        raise ValueError("rl_collect supports --selector sample or oracle")
+    if config.selector not in ("sample", "oracle", "planner"):
+        raise ValueError("rl_collect supports --selector sample, oracle or planner")
     if config.policy_backend != "lap" or config.task != "ladder" or not config.vanilla_physics:
         raise ValueError("rl_collect needs --policy-backend lap, --task ladder and --vanilla-physics")
     if config.lap_head != "flow" or config.rtc:
@@ -123,15 +129,27 @@ def run(config: RLCollectConfig) -> dict[str, Any]:
     if config.lookahead_chunks and config.selector != "oracle":
         raise ValueError("--lookahead-chunks needs --selector oracle")
     require_mjwarp()
-    policy = _build_policy(config)
-    cap = _Capture(policy.client)
-    policy.client = cap
+    planner = None
+    if config.selector == "planner":
+        from unittest import mock
+
+        from abc_minimal.planner import NoServer, PlannerClient, ScriptedPlanner
+
+        with mock.patch("abc_minimal.lap_client._WebsocketClient", NoServer):
+            policy = _build_policy(config)
+    else:
+        policy = _build_policy(config)
     env = SimEnv(height=config.camera_height, width=config.camera_width, camera_keys=config.model.camera_keys,
                  prompt=config.prompt, scene=active_scene(config), task=config.task,
                  ladder_task=config.ladder_task, gpu_id=config.gpu_id)
+    if config.selector == "planner":
+        planner = ScriptedPlanner(env, policy.bridge, config.ladder_task, noise=config.planner_noise)
+        policy.client = PlannerClient(planner, config.execute_chunk_dim)
+    cap = _Capture(policy.client)
+    policy.client = cap
     lift_m = float(active_scene(config).lift_m)
     min_stroke = float(getattr(get_task(config.ladder_task), "wipe_min_total_stroke", 0.0) or 0.10)
-    n_cand = 1 if config.selector == "sample" else int(config.branch_k)
+    n_cand = int(config.branch_k) if config.selector == "oracle" else 1
     H = int(config.lookahead_chunks)
     out = Path(config.dump_dir or config.output_dir).expanduser().resolve()
     out.mkdir(parents=True, exist_ok=True)
@@ -151,9 +169,12 @@ def run(config: RLCollectConfig) -> dict[str, Any]:
                 t0 = time.perf_counter()
                 env.reset(seed=seed)
                 policy.reset_episode()
+                if planner is not None:
+                    planner.reset(np.random.default_rng([seed, rid]))
                 ev = env.evaluate_vanilla()
                 f_now = features(privileged_state(env), ev)
-                rec: dict[str, list] = {k: [] for k in ("state", "actions_model", "steps", "feat_before", "feat_after",
+                rec: dict[str, list] = {k: [] for k in ("state", "actions_model", "actions_phys", "actions_exec",
+                                                        "steps", "feat_before", "feat_after",
                                                         "cand_actions", "cand_scores", "cand_feat_end", "cand_chunks",
                                                         "branch_at", "pick")}
                 imgs: dict[str, list] = {}
@@ -173,7 +194,8 @@ def run(config: RLCollectConfig) -> dict[str, Any]:
                                 break
                             policy.rng_seed = rollout_seed(seed, rid, chunk, k, h)
                             actions = policy.infer(obs if h == 0 else env.obs_vanilla_state())
-                            request, a_model = cap.request, np.asarray(cap.response["actions_model"], np.float32)
+                            request, resp = cap.request, cap.response
+                            a_model = np.asarray(resp["actions_model"], np.float32) if "actions_model" in resp else None
                             n = 0
                             for action in actions[: config.execute_chunk_dim]:
                                 env.step_one_vanilla(action)
@@ -183,7 +205,8 @@ def run(config: RLCollectConfig) -> dict[str, Any]:
                                     break
                             priv = privileged_state(env)
                             seg.append({"request": request, "a_model": a_model, "n": n, "eval": e,
-                                        "feat": features(priv, e)})
+                                        "feat": features(priv, e), "label": resp.get("actions_label"),
+                                        "exec": np.asarray(resp["actions"], np.float32)})
                         score = progress_score(priv, e, lift_m)
                         cands.append({"a_model": seg[0]["a_model"], "score": score, "feat_end": seg[-1]["feat"],
                                       "chunks": len(seg)})
@@ -207,7 +230,11 @@ def run(config: RLCollectConfig) -> dict[str, Any]:
                             if role != "state":
                                 imgs.setdefault(role, []).append(np.asarray(img, np.uint8))
                         rec["state"].append(np.asarray(req["observation"]["state"], np.float32))
-                        rec["actions_model"].append(c["a_model"])
+                        if c["a_model"] is not None:
+                            rec["actions_model"].append(c["a_model"])
+                        if c["label"] is not None:
+                            rec["actions_phys"].append(np.asarray(c["label"], np.float32))
+                            rec["actions_exec"].append(c["exec"])
                         rec["steps"].append(c["n"])
                         rec["feat_before"].append(f_now)
                         rec["feat_after"].append(c["feat"])
@@ -224,7 +251,8 @@ def run(config: RLCollectConfig) -> dict[str, Any]:
                 fb, fa = np.stack(rec["feat_before"]), np.stack(rec["feat_after"])
                 sub_b = np.asarray([wipe_subgoal(x, lift_m, min_stroke) for x in fb], np.int8)
                 sub_a = np.asarray([wipe_subgoal(x, lift_m, min_stroke) for x in fa], np.int8)
-                arrays = {"state": np.stack(rec["state"]), "actions_model": np.stack(rec["actions_model"]),
+                arrays = {"state": np.stack(rec["state"]),
+                          **{k: np.stack(rec[k]) for k in ("actions_model", "actions_phys", "actions_exec") if rec[k]},
                           "steps": np.asarray(rec["steps"], np.int16), "feat_before": fb, "feat_after": fa,
                           "subgoal_before": sub_b, "subgoal_after": sub_a, "pick": np.asarray(rec["pick"], np.int16),
                           **{f"img_{role}": np.stack(v) for role, v in imgs.items()}}
@@ -242,7 +270,8 @@ def run(config: RLCollectConfig) -> dict[str, Any]:
                 np.savez_compressed(path, **arrays)
                 row = {"world_seed": seed, "rollout_id": rid, "file": path.name, "success": bool(ev["ever_success"]),
                        "decisions": len(rec["steps"]), "steps": steps, "selector": config.selector, "branch_k": n_cand,
-                       "lookahead_chunks": H,
+                       "lookahead_chunks": H, "planner_noise": config.planner_noise if planner else None,
+                       "planner_retries": planner.retries if planner else None,
                        "prompt": req0["prompt"], "frame_description": req0["frame_description"],
                        "is_bimanual": bool(req0["is_bimanual"]), "feature_names": list(FEATURES),
                        "final_eval": _priv_summary(privileged_state(env), ev) | {"success": bool(ev["ever_success"])},

@@ -84,6 +84,12 @@ def rpy_to_mat(rpy: np.ndarray) -> np.ndarray:
     return rz @ ry @ rx
 
 
+def mat_to_rpy(m: np.ndarray) -> np.ndarray:
+    """Inverse of `rpy_to_mat` (extrinsic xyz, R = Rz @ Ry @ Rx), pitch in [-pi/2, pi/2]."""
+    p = np.arcsin(np.clip(-m[2, 0], -1.0, 1.0))
+    return np.array([np.arctan2(m[2, 1], m[2, 2]), p, np.arctan2(m[1, 0], m[0, 0])])
+
+
 @dataclass
 class _ArmKin:
     base_bid: int
@@ -418,3 +424,45 @@ class LAPSimBridge:
                 out[t, jslot] = q
                 out[t, gslot] = self._grip(a[6])
         return out
+
+    # -- inverse of joint_chunk_from_eef (scripted planner) ----------------------
+
+    def anchor_poses(self, state14: np.ndarray) -> dict[str, tuple[np.ndarray, np.ndarray]]:
+        """Per-arm (pos, rot) in the arm-base frame that `joint_chunk_from_eef` will
+        add the next chunk's deltas to (same anchor choice)."""
+        state14 = np.asarray(state14, dtype=np.float64)
+        anchor14 = (
+            self._command_joints
+            if self.anchor_on_command and self._command_joints is not None
+            else state14
+        )
+        self.data.qpos[:] = 0.0
+        self._set_arm_joints("left", anchor14[0:6])
+        self._set_arm_joints("right", anchor14[7:13])
+        mujoco.mj_kinematics(self.model, self.data)
+        return {arm: self._site_pose_in_base(arm) for arm in ("left", "right")}
+
+    def base_pose_world(self, arm: str) -> tuple[np.ndarray, np.ndarray]:
+        """World pose of the arm's base body (fixed; independent of the joints)."""
+        mujoco.mj_kinematics(self.model, self.data)
+        bid = self.arms[arm].base_bid
+        return self.data.xpos[bid].copy(), self.data.xmat[bid].reshape(3, 3).copy()
+
+    def eef_chunk_from_targets(self, targets: dict[str, tuple[np.ndarray, np.ndarray, np.ndarray]],
+                               state14: np.ndarray) -> np.ndarray:
+        """Exact inverse of `joint_chunk_from_eef`'s pose mapping: per-arm targets
+        (pos (N,3), rot (N,3,3) in the arm-base frame, grip (N,)) -> (N,14) EEF delta
+        chunk relative to the anchor that call will use."""
+        start = self.anchor_poses(state14)
+        n = len(next(iter(targets.values()))[0])
+        out = np.zeros((n, 2 * PER_ARM_ACTION), dtype=np.float64)
+        for arm, a0 in (("left", 0), ("right", PER_ARM_ACTION)):
+            pos, rot, grip = targets[arm]
+            start_pos, start_rot = start[arm]
+            for t in range(n):
+                delta_rot = (rot[t] @ start_rot.T if self.rotation_delta_in_base else start_rot.T @ rot[t])
+                drot_user = self.R_af.T @ (self.R_cb.T @ delta_rot @ self.R_cb) @ self.R_af
+                out[t, a0 : a0 + 3] = pos[t] - start_pos
+                out[t, a0 + 3 : a0 + 6] = mat_to_rpy(drot_user)
+                out[t, a0 + 6] = grip[t]
+        return out.astype(np.float32)
